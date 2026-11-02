@@ -1,6 +1,37 @@
-# If the project root is accidentally used as a document root,
-# keep secrets and PHP sources off the public web.
-<FilesMatch "(^\.env|composer\.(json|lock)$)">
+# M-TELECOM SALES — front controller for https://mtelecom.kz/sales/
+# Place the repository root in httpdocs/sales. Do not copy this file to the main site root.
+
+Options -Indexes
+DirectoryIndex index.php
+RewriteEngine On
+RewriteBase /sales/
+
+# Secrets and VCS
+RewriteRule (^|/)\.env - [F,L]
+RewriteRule (^|/)\.git - [F,L]
+RewriteRule (^|/)seed\.local\.php$ - [F,L]
+
+# Private application paths must not be served or executed via HTTP
+RewriteRule ^backend/src(/|$) - [F,L]
+RewriteRule ^backend/storage(/|$) - [F,L]
+RewriteRule ^backend/config(/|$) - [F,L]
+RewriteRule ^backend/bin(/|$) - [F,L]
+RewriteRule ^admin(/|$) - [F,L]
+RewriteRule ^database(/|$) - [F,L]
+RewriteRule ^android(/|$) - [F,L]
+RewriteRule ^tests(/|$) - [F,L]
+RewriteRule ^docs(/|$) - [F,L]
+RewriteRule ^scripts(/|$) - [F,L]
+RewriteRule ^deployment(/|$) - [F,L]
+RewriteRule ^release(/|$) - [F,L]
+
+# After install.lock exists, block the installer
+RewriteCond %{DOCUMENT_ROOT}/sales/backend/public/install.lock -f
+RewriteRule ^install\.php$ - [F,L]
+RewriteCond %{DOCUMENT_ROOT}/sales/backend/public/install.lock -f
+RewriteRule ^backend/public/install\.php$ - [F,L]
+
+<FilesMatch "(^\.env|\.sqlite([^-].*)?$|\.log$|\.bak$|composer\.(json|lock)$|seed\.local\.php$)">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
@@ -8,6 +39,16 @@
     Deny from all
   </IfModule>
 </FilesMatch>
-RedirectMatch 403 /backend/src(/|$)
-RedirectMatch 403 /backend/storage(/|$)
-RedirectMatch 403 /backend/config(/|$)
+
+# Root stubs: /sales/ and /sales/install.php
+RewriteRule ^index\.php$ - [L]
+RewriteRule ^install\.php$ - [L]
+
+# All other app routes go through backend/public/index.php
+RewriteRule ^ backend/public/index.php [QSA,L]
+
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set Referrer-Policy "same-origin"
+</IfModule>

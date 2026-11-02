@@ -494,7 +494,10 @@ $refresh = req($app, 'GET', '/api/auth/me', [], null, [], ['mts_session' => $sid
 assert_true($refresh['status'] === 401, 'logout clears web session');
 
 $page = req($app, 'GET', '/');
+assert_true($page['status'] === 200 && str_contains($page['raw'], 'Кабинет руководителя'), 'cabinet home works at / for /sales/');
 assert_true(str_contains($page['raw'], '/sales/assets/js/app.js'), 'admin assets use base path');
+$healthOnSales = req($app, 'GET', '/api/health');
+assert_true(!empty($healthOnSales['json']['ok']), 'API /api/health works with APP_BASE_PATH=/sales');
 $app->config->set('base_path', '');
 $_SERVER['SCRIPT_NAME'] = '/sales/index.php';
 assert_true($app->resolveBasePath() === '/sales', 'base path is detected from script directory');
@@ -603,6 +606,24 @@ assert_true(!empty($health['json']['ok']), 'health endpoint');
 
 $ver = req($app, 'GET', '/api/app/version');
 assert_true(isset($ver['json']['version_code']), 'app version endpoint');
+
+$publicIndex = (string) file_get_contents($root . '/backend/public/index.php');
+assert_true(str_contains($publicIndex, 'install.lock'), 'public index handles missing install without a raw 500');
+$rootInstall = (string) file_get_contents($root . '/install.php');
+assert_true(strlen($rootInstall) > 200 && str_contains($rootInstall, 'backend/public/install.php'), 'root install.php is a documented loader not an 85-byte stub');
+assert_true(str_contains($rootInstall, 'is_file($target)'), 'root install.php checks that the real installer exists');
+$rootIndex = (string) file_get_contents($root . '/index.php');
+assert_true(str_contains($rootIndex, 'backend/public/index.php'), 'root index.php loads the public front controller');
+$rootHt = (string) file_get_contents($root . '/.htaccess');
+assert_true(str_contains($rootHt, 'RewriteBase /sales/'), 'root htaccess is scoped to /sales/');
+assert_true(str_contains($rootHt, 'RewriteRule ^admin(/|$)'), 'root htaccess keeps admin/ directory forbidden');
+
+$installSrc = (string) file_get_contents($root . '/backend/public/install.php');
+assert_true(str_contains($installSrc, "https://mtelecom.kz/sales"), 'installer default APP_URL is https://mtelecom.kz/sales');
+assert_true(str_contains($installSrc, "['APP_BASE_PATH'] ?? '/sales'"), 'installer default APP_BASE_PATH is /sales');
+$publicHt = (string) file_get_contents($root . '/backend/public/.htaccess');
+assert_true(str_contains($publicHt, 'sales/backend/public/install.lock'), 'public htaccess checks httpdocs/sales install.lock');
+assert_true(str_contains($publicHt, '%{DOCUMENT_ROOT}/install.lock'), 'public htaccess still checks document-root install.lock');
 
 $seedScript = $root . '/backend/bin/seed-local.php';
 $seedSrc = (string) file_get_contents($seedScript);

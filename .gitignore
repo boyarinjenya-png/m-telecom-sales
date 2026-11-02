@@ -79,6 +79,7 @@ tools/
 composer.phar
 vendor/
 .phpunit.result.cache
+release/
 
 # OS
 desktop.ini

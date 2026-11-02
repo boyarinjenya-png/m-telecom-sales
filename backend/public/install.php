@@ -30,7 +30,7 @@ $errors = [];
 $ok = [];
 $posted = $_SERVER['REQUEST_METHOD'] === 'POST';
 
-$appUrl = $_POST['APP_URL'] ?? 'https://sales.mtelecom.kz';
+$appUrl = $_POST['APP_URL'] ?? 'https://mtelecom.kz/sales';
 $dbHost = $_POST['DB_HOST'] ?? 'localhost';
 $dbPort = $_POST['DB_PORT'] ?? '3306';
 $dbName = $_POST['DB_NAME'] ?? 'mtelecom_sales';
@@ -39,7 +39,7 @@ $dbPass = $_POST['DB_PASS'] ?? '';
 $adminLogin = $_POST['ADMIN_LOGIN'] ?? 'admin';
 $adminName = $_POST['ADMIN_NAME'] ?? 'Руководитель';
 $adminPass = $_POST['ADMIN_PASS'] ?? '';
-$basePath = $_POST['APP_BASE_PATH'] ?? '';
+$basePath = $_POST['APP_BASE_PATH'] ?? '/sales';
 
 if ($posted) {
     if (PHP_VERSION_ID < 80200) {
@@ -222,7 +222,7 @@ if ($posted && !$errors) {
       <label>Адрес кабинета</label>
       <input name="APP_URL" value="<?= h($appUrl) ?>">
       <label>Базовый путь (если не поддомен, например /sales)</label>
-      <input name="APP_BASE_PATH" value="<?= h($basePath) ?>" placeholder="оставьте пустым для sales.mtelecom.kz">
+      <input name="APP_BASE_PATH" value="<?= h($basePath) ?>" placeholder="/sales">
       <div class="row">
         <div><label>MySQL хост</label><input name="DB_HOST" value="<?= h($dbHost) ?>"></div>
         <div><label>Порт</label><input name="DB_PORT" value="<?= h($dbPort) ?>"></div>

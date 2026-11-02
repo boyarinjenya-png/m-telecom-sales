@@ -15,7 +15,11 @@ RewriteEngine On
 </FilesMatch>
 
 # After install.lock exists, installer cannot be opened again.
-RewriteCond %{DOCUMENT_ROOT}/install.lock -f
+# Works when this directory is the document root, when the app root is
+# the document root, and when the app lives at httpdocs/sales.
+RewriteCond %{DOCUMENT_ROOT}/install.lock -f [OR]
+RewriteCond %{DOCUMENT_ROOT}/backend/public/install.lock -f [OR]
+RewriteCond %{DOCUMENT_ROOT}/sales/backend/public/install.lock -f
 RewriteRule ^install\.php$ - [F,L]
 
 # Keep real files (assets, install.php before lock)
