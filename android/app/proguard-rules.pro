@@ -1,0 +1,3 @@
+-keep class kz.mtelecom.sales.data.api.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*

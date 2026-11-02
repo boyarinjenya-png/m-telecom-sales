@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0B3A5B">
+  <title>M-TELECOM SALES</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="{{BASE_PATH}}/assets/css/app.css?v={{ASSET_V}}">
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <form id="login-form" class="login-card" autocomplete="username">
+      <div class="brand">
+        <div class="brand-mark">M</div>
+        <div>
+          <h1>M-TELECOM SALES</h1>
+          <p>Кабинет руководителя</p>
+        </div>
+      </div>
+      <label>Логин<input name="login" required></label>
+      <label>Пароль<input name="password" type="password" required></label>
+      <p id="login-error" class="form-error" hidden></p>
+      <button type="submit">Войти</button>
+    </form>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <aside class="sidebar">
+      <div class="brand compact">
+        <div class="brand-mark">M</div>
+        <div>
+          <strong>M-TELECOM</strong>
+          <span>SALES</span>
+        </div>
+      </div>
+      <nav id="nav"></nav>
+      <div class="sidebar-user">
+        <div id="me-name"></div>
+        <button id="logout-btn" type="button">Выйти</button>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <button id="menu-btn" class="icon-btn" type="button" aria-label="Меню">☰</button>
+        <h2 id="page-title">Обзор</h2>
+        <div class="filters" id="global-filters">
+          <select id="period">
+            <option value="today">Сегодня</option>
+            <option value="yesterday">Вчера</option>
+            <option value="last_7">7 дней</option>
+            <option value="last_30" selected>30 дней</option>
+            <option value="this_month">Текущий месяц</option>
+            <option value="last_month">Предыдущий месяц</option>
+            <option value="custom">Период</option>
+          </select>
+          <input id="from" type="date" hidden>
+          <input id="to" type="date" hidden>
+        </div>
+      </header>
+      <section id="content" class="content"></section>
+    </main>
+  </div>
+  <div id="modal" class="modal" hidden></div>
+  <script>window.APP_BASE = "{{BASE_PATH}}";</script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="{{BASE_PATH}}/assets/js/app.js?v={{ASSET_V}}"></script>
+</body>
+</html>

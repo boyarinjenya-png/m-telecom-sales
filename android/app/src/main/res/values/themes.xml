@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.MTelecomSales" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#0B3A5B</item>
+        <item name="android:navigationBarColor">#0B3A5B</item>
+        <item name="android:windowBackground">#F3F6F9</item>
+    </style>
+    <color name="navy">#0B3A5B</color>
+    <color name="cyan">#00A3E0</color>
+</resources>

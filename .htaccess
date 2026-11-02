@@ -1,0 +1,13 @@
+# If the project root is accidentally used as a document root,
+# keep secrets and PHP sources off the public web.
+<FilesMatch "(^\.env|composer\.(json|lock)$)">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Deny from all
+  </IfModule>
+</FilesMatch>
+RedirectMatch 403 /backend/src(/|$)
+RedirectMatch 403 /backend/storage(/|$)
+RedirectMatch 403 /backend/config(/|$)

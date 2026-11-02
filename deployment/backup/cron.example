@@ -1,0 +1,4 @@
+# Пример cron на хостинге (если тариф позволяет).
+# Ежедневно в 03:10, каталог замените на реальный.
+
+10 3 * * * /usr/bin/php /home/USER/mtelecom-sales/backend/bin/backup.php >/dev/null 2>&1

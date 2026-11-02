@@ -1,0 +1,4 @@
+## Copy to local.properties (not committed)
+sdk.dir=C:\\Users\\USER\\AppData\\Local\\Android\\Sdk
+## Optional debug API default used by assembleDebug
+# DEBUG_API_URL=http://10.0.2.2
