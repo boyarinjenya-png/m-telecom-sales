@@ -55,6 +55,21 @@ fi
 
 APKSIGNER=$(ls "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/*/apksigner 2>/dev/null | sort | tail -1)
 AAPT=$(ls "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/*/aapt 2>/dev/null | sort | tail -1)
+if [[ -z "$APKSIGNER" || -z "$AAPT" ]]; then
+  echo "apksigner or aapt not found"
+  exit 1
+fi
+
+# assembleDebug on the runner can ignore ~/.android/debug.keystore and sign with a
+# freshly generated debug key. Re-sign with the keystore whose fingerprint was checked above.
+echo "Re-signing APK with the verified debug keystore"
+"$APKSIGNER" sign \
+  --ks "$TMP_KS" \
+  --ks-key-alias "$ANDROID_KEY_ALIAS" \
+  --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+  --key-pass env:ANDROID_KEY_PASSWORD \
+  "$APK"
+
 certs=$("$APKSIGNER" verify --print-certs "$APK" 2>&1)
 echo "$certs" | grep -qi 'Verified using' || true
 got=$(echo "$certs" | awk '/SHA-256 digest:/{print $NF; exit}' | tr -d ' :' | tr '[:lower:]' '[:upper:]')
