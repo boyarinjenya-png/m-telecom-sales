@@ -1,0 +1,217 @@
+# M-TELECOM SALES — production deploy (push to main after CI only)
+# Never runs on pull_request. Does not touch mtelecom.kz main site.
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_apk:
+        description: "Skip Android APK job"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.decide.outputs.should_deploy }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - name: Decide whether to deploy
+        id: decide
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const event = context.eventName;
+            if (event === 'workflow_dispatch') {
+              core.setOutput('should_deploy', 'true');
+              core.setOutput('sha', context.sha);
+              return;
+            }
+            if (event !== 'workflow_run') {
+              core.setOutput('should_deploy', 'false');
+              return;
+            }
+            const wr = context.payload.workflow_run;
+            if (!wr || wr.conclusion !== 'success') {
+              core.setFailed(`CI did not succeed (conclusion=${wr && wr.conclusion})`);
+              core.setOutput('should_deploy', 'false');
+              return;
+            }
+            if (wr.event !== 'push' && wr.event !== 'workflow_dispatch') {
+              core.info(`Skipping deploy for CI event=${wr.event}`);
+              core.setOutput('should_deploy', 'false');
+              return;
+            }
+            if (wr.head_branch !== 'main') {
+              core.info(`Skipping deploy for branch=${wr.head_branch}`);
+              core.setOutput('should_deploy', 'false');
+              return;
+            }
+            core.setOutput('should_deploy', 'true');
+            core.setOutput('sha', wr.head_sha);
+
+  deploy-web:
+    name: deploy-web
+    needs: gate
+    if: needs.gate.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Setup PHP 8.3 (guard scripts)
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: "8.3"
+          coverage: none
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Require FTP secrets
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          missing=0
+          for v in FTP_HOST FTP_USER FTP_PASSWORD; do
+            if [ -z "${!v}" ]; then echo "Missing secret: $v"; missing=1; fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Production FTP secrets are not configured. Web deploy aborted (CRM unchanged)."
+            exit 1
+          fi
+
+      - name: Migration safety guard
+        run: bash scripts/ci/migration-guard.sh
+
+      - name: Build deployment package (allowlist)
+        run: bash scripts/deploy/build-package.sh
+
+      - name: FTPS backup + upload + health + rollback
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_REMOTE_ROOT: ${{ secrets.FTP_REMOTE_ROOT }}
+          DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+          HEALTH_BASE_URL: https://mtelecom.kz/sales
+          MAIN_SITE_URL: https://mtelecom.kz/
+          DEPLOY_MIGRATE_TOKEN: ${{ secrets.DEPLOY_MIGRATE_TOKEN }}
+          SMOKE_LOGIN: ${{ secrets.SMOKE_LOGIN }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+        run: python3 scripts/deploy/ftps_deploy.py
+
+      - name: Upload deploy log artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deploy-log-${{ needs.gate.outputs.sha }}
+          path: |
+            artifacts/deploy/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  deploy-apk:
+    name: deploy-apk
+    needs: [gate, deploy-web]
+    if: |
+      always() &&
+      needs.gate.outputs.should_deploy == 'true' &&
+      needs.deploy-web.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || inputs.skip_apk != true)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Check Android signing secrets
+        id: signing
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_DEBUG_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Android signing secrets missing — APK deploy skipped (CRM already updated)."
+            exit 0
+          fi
+          if [ -z "$FTP_HOST" ] || [ -z "$FTP_USER" ] || [ -z "$FTP_PASSWORD" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "FTP secrets missing — APK deploy skipped."
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Setup JDK 17
+        if: steps.signing.outputs.skip != 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: android/**/*.gradle*
+
+      - name: Setup Android SDK
+        if: steps.signing.outputs.skip != 'true'
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+      - name: Setup Python
+        if: steps.signing.outputs.skip != 'true'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Build signed Debug APK with production-compatible keystore
+        if: steps.signing.outputs.skip != 'true'
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: "22B0A65B5BB6BD813F4B664D1CF3EB4F4323FC8894060DC3DA4AC8D7D495AE71"
+          VERSION_CODE_OVERRIDE: ${{ github.run_number }}
+        run: bash scripts/deploy/build-signed-debug-apk.sh
+
+      - name: Upload APK via FTPS (no delete of other files)
+        if: steps.signing.outputs.skip != 'true'
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_REMOTE_ROOT: ${{ secrets.FTP_REMOTE_ROOT }}
+          APK_LOCAL: artifacts/apk/m-telecom-sales.apk
+          APK_REMOTE: backend/storage/downloads/m-telecom-sales.apk
+        run: python3 scripts/deploy/ftps_upload_file.py
+
+      - name: Verify published APK HTTP
+        if: steps.signing.outputs.skip != 'true'
+        run: bash scripts/deploy/verify-apk-url.sh https://mtelecom.kz/sales/downloads/m-telecom-sales.apk

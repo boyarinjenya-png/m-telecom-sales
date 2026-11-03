@@ -29,8 +29,9 @@ android {
         applicationId = "kz.mtelecom.sales"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI/CD may pass -PversionCodeOverride for signed debug upgrades over production.
+        versionCode = (project.findProperty("versionCodeOverride") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("versionNameOverride") as String?) ?: "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     signingConfigs {

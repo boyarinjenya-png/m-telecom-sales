@@ -7,6 +7,7 @@
 ## Служебные
 
 - `GET /api/health`
+- `POST /api/system/migrate` — только с заголовком `X-Deploy-Token`, если в `.env` задан `DEPLOY_MIGRATE_TOKEN`; иначе 404. Идемпотентный `Migrator::up()` (без DROP/TRUNCATE).
 - `GET /api/catalog`
 - `GET /api/app/version`
 

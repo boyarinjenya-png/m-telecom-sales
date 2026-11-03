@@ -6,7 +6,9 @@ namespace MTelecom\Sales;
 use MTelecom\Sales\Auth\AuthService;
 use MTelecom\Sales\Core\Config;
 use MTelecom\Sales\Core\Database;
+use MTelecom\Sales\Core\Env;
 use MTelecom\Sales\Core\HttpException;
+use MTelecom\Sales\Core\Migrator;
 use MTelecom\Sales\Core\Request;
 use MTelecom\Sales\Core\Response;
 use MTelecom\Sales\Core\Router;
@@ -139,6 +141,24 @@ final class App
     {
         $r = $this->router;
         $r->get('/api/health', fn () => ['ok' => true, 'name' => $this->config->get('name'), 'time' => $this->db->now()], false);
+
+        // Deploy-only idempotent schema upgrade. Disabled unless DEPLOY_MIGRATE_TOKEN is set in .env.
+        $r->post('/api/system/migrate', function (Request $req) {
+            $expected = Env::get('DEPLOY_MIGRATE_TOKEN');
+            if ($expected === null || $expected === '') {
+                throw new HttpException('Not found', 404);
+            }
+            $provided = $req->header('x-deploy-token') ?? '';
+            if ($provided === '' || !hash_equals($expected, $provided)) {
+                throw new HttpException('Unauthorized', 401);
+            }
+            (new Migrator($this->db))->up();
+            return [
+                'ok' => true,
+                'schema_version' => Migrator::VERSION,
+                'time' => $this->db->now(),
+            ];
+        }, false);
         $r->get('/api/catalog', fn () => [
             'statuses' => Catalog::STATUSES,
             'results' => Catalog::RESULTS,

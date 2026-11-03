@@ -604,6 +604,18 @@ assert_true(isset($ranked['json']['rankings']['by_conversion']), 'admin rankings
 $health = req($app, 'GET', '/api/health');
 assert_true(!empty($health['json']['ok']), 'health endpoint');
 
+$migOff = req($app, 'POST', '/api/system/migrate', []);
+assert_true($migOff['status'] === 404, 'migrate endpoint disabled without DEPLOY_MIGRATE_TOKEN');
+putenv('DEPLOY_MIGRATE_TOKEN=ci-migrate-token-test');
+$_ENV['DEPLOY_MIGRATE_TOKEN'] = 'ci-migrate-token-test';
+$migBad = req($app, 'POST', '/api/system/migrate', [], null, [], [], ['x-deploy-token' => 'wrong']);
+assert_true($migBad['status'] === 401, 'migrate rejects wrong deploy token');
+$migOk = req($app, 'POST', '/api/system/migrate', [], null, [], [], ['x-deploy-token' => 'ci-migrate-token-test']);
+assert_true($migOk['status'] === 200 && !empty($migOk['json']['ok']), 'migrate succeeds with deploy token');
+assert_true(($migOk['json']['schema_version'] ?? '') === MTelecom\Sales\Core\Migrator::VERSION, 'migrate reports schema version');
+putenv('DEPLOY_MIGRATE_TOKEN');
+unset($_ENV['DEPLOY_MIGRATE_TOKEN']);
+
 $ver = req($app, 'GET', '/api/app/version');
 assert_true(isset($ver['json']['version_code']), 'app version endpoint');
 

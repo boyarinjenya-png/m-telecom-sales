@@ -1,0 +1,52 @@
+# Enable GitHub Auto-Merge (squash) for PRs authored by the repository owner.
+# Actual merge waits for required status checks on main.
+# Requires: Settings → General → Allow auto-merge
+# Requires: branch protection/ruleset on main with checks: backend, android
+name: Auto-merge owner PRs
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-automerge:
+    name: enable-automerge
+    if: |
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable squash auto-merge for owner PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const login = context.payload.pull_request.user.login;
+            const pull_number = context.payload.pull_request.number;
+            core.info(`PR #${pull_number} author=${login} owner=${owner}`);
+            if (login !== owner) {
+              core.setFailed('Refusing auto-merge for non-owner PR');
+              return;
+            }
+            const query = `
+              mutation($id: ID!) {
+                enablePullRequestAutoMerge(input: {
+                  pullRequestId: $id,
+                  mergeMethod: SQUASH
+                }) {
+                  pullRequest { autoMergeRequest { enabledAt } }
+                }
+              }`;
+            try {
+              await github.graphql(query, { id: context.payload.pull_request.node_id });
+              core.info('Auto-merge (squash) enabled. Merge waits for required checks.');
+            } catch (e) {
+              const msg = String(e && e.message ? e.message : e);
+              core.warning('Could not enable auto-merge: ' + msg);
+              core.warning('Owner must enable Allow auto-merge and required status checks on main, then re-run.');
+            }

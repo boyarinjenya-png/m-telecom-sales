@@ -1,0 +1,79 @@
+# M-TELECOM SALES — CI (no production secrets on pull_request)
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: "8.3"
+          extensions: mbstring, openssl, pdo, pdo_sqlite, pdo_mysql, json, curl
+          coverage: none
+
+      - name: PHP syntax check
+        run: bash scripts/ci/php-lint.sh
+
+      - name: Migration safety guard
+        run: bash scripts/ci/migration-guard.sh
+
+      - name: Security / config hygiene
+        run: bash scripts/ci/security-check.sh
+
+      - name: Backend tests
+        run: php tests/run.php
+
+  android:
+    name: android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: android/**/*.gradle*
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+      - name: Grant gradlew
+        run: chmod +x android/gradlew
+
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Assemble Debug + Release
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
+
+      - name: Verify APK package / version / presence
+        run: bash scripts/ci/android-verify.sh
+
+      # Signing secrets are intentionally NOT used on pull_request.
+      - name: Note on APK signing
+        if: github.event_name == 'pull_request'
+        run: echo "PR CI builds APKs with the runner debug keystore only. Production-compatible signing runs in deploy-production after secrets are present."
