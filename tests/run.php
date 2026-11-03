@@ -658,5 +658,145 @@ if (is_resource($proc)) {
     assert_true(false, 'seed-local.php refuses production MySQL before connect');
 }
 
+// --- Period filters for calls / whatsapp + APK download + task idempotency ---
+// $t2 currently owns $clientId after the assign step above.
+$mgrTok = $t2;
+$periodCalls = req($app, 'GET', '/api/calls', [], $mgrTok, ['period' => 'today']);
+assert_true(($periodCalls['status'] ?? 0) === 200 && isset($periodCalls['json']['items']), 'calls honor period=today');
+$periodWa = req($app, 'GET', '/api/whatsapp', [], $mgrTok, ['period' => 'yesterday']);
+assert_true(($periodWa['status'] ?? 0) === 200 && isset($periodWa['json']['items']), 'whatsapp honor period=yesterday');
+$periodCallsEmpty = req($app, 'GET', '/api/calls', [], $mgrTok, ['period' => 'last_month']);
+assert_true(($periodCallsEmpty['status'] ?? 0) === 200, 'calls honor period=last_month');
+
+$dashToday = req($app, 'GET', '/api/dashboard', [], $mgrTok, ['period' => 'today']);
+$ovToday = req($app, 'GET', '/api/analytics/overview', [], $mgrTok, ['period' => 'today']);
+assert_true(
+    ($dashToday['json']['dashboard']['clients_total'] ?? null) === ($ovToday['json']['overview']['clients_total'] ?? null)
+    && ($dashToday['json']['dashboard']['calls_total'] ?? null) === ($ovToday['json']['overview']['calls_total'] ?? null)
+    && ($dashToday['json']['dashboard']['whatsapp_total'] ?? null) === ($ovToday['json']['overview']['whatsapp_total'] ?? null)
+    && ($dashToday['json']['dashboard']['rejected'] ?? null) === ($ovToday['json']['overview']['rejected'] ?? null)
+    && ($dashToday['json']['dashboard']['overdue_tasks'] ?? null) === ($ovToday['json']['overview']['overdue_tasks'] ?? null),
+    'dashboard and overview match for same period=today'
+);
+
+foreach (['today', 'yesterday', 'last_7', 'last_30', 'this_month', 'last_month'] as $periodName) {
+    $p = req($app, 'GET', '/api/dashboard', [], $mgrTok, ['period' => $periodName]);
+    assert_true(
+        ($p['status'] ?? 0) === 200
+        && isset($p['json']['dashboard']['period']['from'], $p['json']['dashboard']['period']['to'])
+        && array_key_exists('whatsapp_total', $p['json']['dashboard'])
+        && array_key_exists('rejected', $p['json']['dashboard'])
+        && array_key_exists('overdue_tasks', $p['json']['dashboard']),
+        "dashboard period={$periodName} returns KPI fields"
+    );
+}
+
+$taskKey = 'task-idem-' . bin2hex(random_bytes(4));
+$taskA = req($app, 'POST', '/api/tasks', [
+    'client_id' => $clientId,
+    'title' => 'Offline idempotency A',
+    'details' => 'details-a',
+    'idempotency_key' => $taskKey,
+], $mgrTok);
+$taskB = req($app, 'POST', '/api/tasks', [
+    'client_id' => $clientId,
+    'title' => 'Offline idempotency B should not create',
+    'details' => 'details-b',
+    'idempotency_key' => $taskKey,
+], $mgrTok);
+assert_true(
+    ($taskA['json']['task']['id'] ?? null) !== null
+    && ($taskA['json']['task']['id'] ?? null) === ($taskB['json']['task']['id'] ?? null),
+    'task.create idempotency_key prevents duplicates'
+);
+
+$syncTaskKey = 'sync-task-' . bin2hex(random_bytes(4));
+$syncTask1 = req($app, 'POST', '/api/sync/push', [
+    'ops' => [[
+        'client_op_id' => 'op-task-1',
+        'kind' => 'task.create',
+        'payload' => [
+            'client_id' => $clientId,
+            'title' => 'Offline from outbox',
+            'details' => 'offline details',
+            'due_at' => null,
+            'idempotency_key' => $syncTaskKey,
+        ],
+    ]],
+], $mgrTok);
+$syncTask2 = req($app, 'POST', '/api/sync/push', [
+    'ops' => [[
+        'client_op_id' => 'op-task-2',
+        'kind' => 'task.create',
+        'payload' => [
+            'client_id' => $clientId,
+            'title' => 'Offline from outbox retry',
+            'details' => 'offline details retry',
+            'due_at' => null,
+            'idempotency_key' => $syncTaskKey,
+        ],
+    ]],
+], $mgrTok);
+assert_true(
+    !empty($syncTask1['json']['results'][0]['ok'])
+    && !empty($syncTask2['json']['results'][0]['ok'])
+    && (($syncTask1['json']['results'][0]['data']['id'] ?? null) === ($syncTask2['json']['results'][0]['data']['id'] ?? null)),
+    'sync task.create with same idempotency_key does not duplicate'
+);
+
+$syncIxKey = 'sync-ix-' . bin2hex(random_bytes(4));
+$syncIx1 = req($app, 'POST', '/api/sync/push', [
+    'ops' => [[
+        'client_op_id' => 'op-ix-1',
+        'kind' => 'interaction',
+        'payload' => [
+            'client_id' => $clientId,
+            'type' => 'note',
+            'comment' => 'offline note',
+            'idempotency_key' => $syncIxKey,
+        ],
+    ]],
+], $mgrTok);
+$syncIx2 = req($app, 'POST', '/api/sync/push', [
+    'ops' => [[
+        'client_op_id' => 'op-ix-2',
+        'kind' => 'interaction',
+        'payload' => [
+            'client_id' => $clientId,
+            'type' => 'note',
+            'comment' => 'offline note retry',
+            'idempotency_key' => $syncIxKey,
+        ],
+    ]],
+], $mgrTok);
+assert_true(
+    !empty($syncIx1['json']['results'][0]['ok'])
+    && !empty($syncIx2['json']['results'][0]['ok'])
+    && (($syncIx1['json']['results'][0]['data']['id'] ?? null) === ($syncIx2['json']['results'][0]['data']['id'] ?? null)),
+    'sync interaction with client_id + idempotency_key does not duplicate'
+);
+
+$apkMissing = req($app, 'GET', '/downloads/missing-file.apk');
+assert_true(($apkMissing['status'] ?? 0) === 404, 'missing APK returns 404 JSON not HTML SPA');
+$apkOk = req($app, 'GET', '/downloads/m-telecom-sales.apk');
+$apkPathHeader = $apkOk['headers']['Content-Type'] ?? '';
+$apkIsFile = !empty($apkOk['headers']) && (
+    str_contains($apkPathHeader, 'android.package-archive')
+    || str_contains($apkPathHeader, 'octet-stream')
+    || (($apkOk['status'] ?? 0) === 200 && empty($apkOk['json']))
+);
+// Response::file may leave body empty and set isFile; status should be 200 when file exists.
+$storageApk = $root . '/backend/storage/downloads/m-telecom-sales.apk';
+if (is_file($storageApk)) {
+    assert_true(($apkOk['status'] ?? 0) === 200 && str_contains($apkPathHeader, 'android.package-archive'), 'APK download serves package archive when file present');
+} else {
+    assert_true(($apkOk['status'] ?? 0) === 404, 'APK download 404 when storage file absent');
+}
+
+$seedHasManagerId = str_contains($seedSrc, "'manager_id'") && !str_contains($seedSrc, "'owner_id'");
+assert_true($seedHasManagerId, 'seed-local.php inserts manager_id not owner_id');
+assert_true(!str_contains($seedSrc, "'city'"), 'seed-local.php does not use missing city column');
+assert_true(!str_contains($seedSrc, "'source'"), 'seed-local.php does not use missing source column');
+
 echo "\nPassed: {$passed}; Failed: {$failed}\n";
 exit($failed === 0 ? 0 : 1);

@@ -1,6 +1,7 @@
 package kz.mtelecom.sales.call
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,13 +16,7 @@ object PhoneActions {
     fun hasReadCallLog(context: Context): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED
 
-    fun normalize(phone: String): String = phone.filter { it.isDigit() }.let {
-        when {
-            it.length == 11 && (it.startsWith("8") || it.startsWith("7")) -> "7" + it.substring(1)
-            it.length == 10 -> "7$it"
-            else -> it
-        }
-    }
+    fun normalize(phone: String): String = PhoneNormalize.normalize(phone)
 
     fun dial(context: Context, phone: String) {
         val uri = Uri.parse("tel:+${normalize(phone)}")
@@ -34,30 +29,68 @@ object PhoneActions {
         }
     }
 
+    fun whatsappInstalled(context: Context): Boolean =
+        isPackageInstalled(context, "com.whatsapp") || isPackageInstalled(context, "com.whatsapp.w4b")
+
     fun whatsappChat(context: Context, phone: String) {
-        val url = "https://wa.me/${normalize(phone)}"
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val url = PhoneNormalize.waMeUrl(phone)
+        val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Prefer the installed WhatsApp / Business package so the system does not open a browser first.
+        when {
+            isPackageInstalled(context, "com.whatsapp") -> view.setPackage("com.whatsapp")
+            isPackageInstalled(context, "com.whatsapp.w4b") -> view.setPackage("com.whatsapp.w4b")
+        }
+        try {
+            context.startActivity(view)
+        } catch (_: ActivityNotFoundException) {
+            openPlayStoreOrBrowser(context, url)
+        } catch (_: Exception) {
+            openPlayStoreOrBrowser(context, url)
+        }
     }
 
     fun whatsappCall(context: Context, phone: String) {
-        val normalized = normalize(phone)
-        // Prefer WhatsApp voice-call deep link; fall back to chat if unavailable.
-        val callUri = Uri.parse("whatsapp://call?jids=${normalized}@s.whatsapp.net")
-        val callIntent = Intent(Intent.ACTION_VIEW, callUri)
-            .setPackage("com.whatsapp")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
-            context.startActivity(callIntent)
-        } catch (_: Exception) {
+        val callUri = Uri.parse(PhoneNormalize.waCallUri(phone))
+        val packages = buildList {
+            if (isPackageInstalled(context, "com.whatsapp")) add("com.whatsapp")
+            if (isPackageInstalled(context, "com.whatsapp.w4b")) add("com.whatsapp.w4b")
+        }
+        for (pkg in packages) {
             try {
                 context.startActivity(
                     Intent(Intent.ACTION_VIEW, callUri)
-                        .setPackage("com.whatsapp.w4b")
+                        .setPackage(pkg)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
+                return
             } catch (_: Exception) {
-                whatsappChat(context, phone)
+                // try next package / fall through to chat
             }
+        }
+        // No WhatsApp call handler — open chat (or Play Store / browser if WhatsApp is absent).
+        whatsappChat(context, phone)
+    }
+
+    private fun isPackageInstalled(context: Context, packageName: String): Boolean {
+        return try {
+            context.packageManager.getPackageInfo(packageName, 0)
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
+
+    private fun openPlayStoreOrBrowser(context: Context, fallbackUrl: String) {
+        val market = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("market://details?id=com.whatsapp")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(market)
+        } catch (_: Exception) {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
         }
     }
 

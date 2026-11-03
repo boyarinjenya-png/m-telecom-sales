@@ -83,3 +83,7 @@ release/
 
 # OS
 desktop.ini
+
+# Packaged APK for login download link (deploy copies the binary here)
+backend/storage/downloads/*
+!backend/storage/downloads/.gitkeep

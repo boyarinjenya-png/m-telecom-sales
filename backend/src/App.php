@@ -75,6 +75,10 @@ final class App
             if ($static) {
                 return $static;
             }
+            $apk = $this->serveApkDownload($request);
+            if ($apk) {
+                return $apk;
+            }
             $match = $this->router->match($request);
             if (!$match) {
                 if (str_starts_with($request->path, '/api/')) {
@@ -514,6 +518,38 @@ final class App
             default => 'application/octet-stream',
         };
         return Response::file($file, $mime);
+    }
+
+    /**
+     * Serves packaged APK for the login-page download link.
+     * File lives outside git: backend/storage/downloads/m-telecom-sales.apk
+     * (or optional backend/public/downloads/ for Apache direct serve).
+     */
+    private function serveApkDownload(Request $request): ?Response
+    {
+        if (!preg_match('#^/downloads/([a-zA-Z0-9._-]+\.apk)$#', $request->path, $m)) {
+            return null;
+        }
+        $name = $m[1];
+        $candidates = [
+            $this->config->get('storage') . '/downloads/' . $name,
+            $this->root . '/backend/public/downloads/' . $name,
+        ];
+        $file = null;
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate) && is_readable($candidate)) {
+                $file = $candidate;
+                break;
+            }
+        }
+        if ($file === null) {
+            return Response::error('APK-файл ещё не размещён на сервере', 404);
+        }
+        $response = Response::file($file, 'application/vnd.android.package-archive');
+        $response->headers['Content-Disposition'] = 'attachment; filename="' . $name . '"';
+        $response->headers['Cache-Control'] = 'private, no-cache';
+        $response->headers['Content-Length'] = (string) filesize($file);
+        return $response;
     }
 
     private function adminPage(Request $request): Response

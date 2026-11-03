@@ -371,31 +371,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun addClientTask(clientId: Int, title: String, details: String, dueAt: String?, done: () -> Unit) {
         viewModelScope.launch {
+            val key = UUID.randomUUID().toString()
+            val payload = mapOf(
+                "client_id" to clientId,
+                "title" to title,
+                "details" to details,
+                "due_at" to dueAt,
+                "idempotency_key" to key
+            )
             try {
-                api().createTask(
-                    mapOf(
-                        "client_id" to clientId,
-                        "title" to title,
-                        "details" to details,
-                        "due_at" to dueAt
-                    )
-                )
+                api().createTask(payload)
             } catch (e: Exception) {
                 if (handleAuth(e)) {
                     done()
                     return@launch
                 }
-                enqueue(
-                    "task.create",
-                    gson.toJson(
-                        mapOf(
-                            "client_id" to clientId,
-                            "title" to title,
-                            "details" to details,
-                            "due_at" to dueAt
-                        )
-                    )
-                )
+                enqueue("task.create", gson.toJson(payload))
             }
             openClient(clientId)
             refreshAll()
