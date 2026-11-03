@@ -175,3 +175,36 @@ th { font-size: 12px; color: var(--muted); font-weight: 700; }
   .grid-2, .type-pick, .repeat-row, .repeat-row.cols-2, .repeat-row.cols-obj, .chart-grid, .info-grid { grid-template-columns: 1fr; }
   .content, .topbar { padding-left: 16px; padding-right: 16px; }
 }
+
+.login-card .login-submit {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 18px;
+  font-size: 17px;
+}
+.login-card .android-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 18px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: #7A93A8;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.3;
+  text-decoration: none;
+}
+.login-card .android-download:hover,
+.login-card .android-download:focus {
+  color: #0B3A5B;
+  text-decoration: underline;
+}
+.nav-scrim { display: none; }
+@media (max-width: 900px) {
+  .nav-scrim:not([hidden]) {
+    display: block; position: fixed; inset: 0; background: rgba(11, 58, 91, .46); z-index: 19;
+  }
+}

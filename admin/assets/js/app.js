@@ -81,7 +81,10 @@
     $('login-screen').hidden = true;
     $('app').hidden = false;
     $('me-name').textContent = state.me.full_name;
-    if (!state.catalog) state.catalog = (await api('/api/catalog')).statuses ? await api('/api/catalog') : null;
+    if (!state.catalog) {
+      const cat = await api('/api/catalog');
+      state.catalog = cat.statuses ? cat : null;
+    }
     route();
   }
 
@@ -125,7 +128,16 @@
     sessionStorage.removeItem('mts_csrf');
     location.reload();
   });
-  $('menu-btn').addEventListener('click', () => document.querySelector('.sidebar').classList.toggle('open'));
+  function setMenu(open) {
+    document.querySelector('.sidebar').classList.toggle('open', open);
+    const scrim = $('nav-scrim');
+    if (scrim) scrim.hidden = !open;
+  }
+  $('menu-btn').addEventListener('click', () => {
+    setMenu(!document.querySelector('.sidebar').classList.contains('open'));
+  });
+  const navScrim = $('nav-scrim');
+  if (navScrim) navScrim.addEventListener('click', () => setMenu(false));
   $('period').addEventListener('change', () => {
     const custom = $('period').value === 'custom';
     $('from').hidden = $('to').hidden = !custom;

@@ -52,6 +52,7 @@ data class UiState(
     val error: String? = null,
     val userName: String? = null,
     val dashboard: Map<String, Any?> = emptyMap(),
+    val dashboardPeriod: String = "today",
     val clients: List<ClientDto> = emptyList(),
     val client: ClientDto? = null,
     val tasks: List<TaskDto> = emptyList(),
@@ -131,11 +132,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setDashboardPeriod(period: String) {
+        if (period == _state.value.dashboardPeriod) return
+        _state.value = _state.value.copy(dashboardPeriod = period)
+        refreshAll()
+    }
+
     fun refreshAll() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
             try {
-                val dash = api().dashboard("today").dashboard ?: emptyMap()
+                val period = _state.value.dashboardPeriod
+                val dash = api().dashboard(period).dashboard ?: emptyMap()
                 val clients = api().clients().items
                 val tasks = api().tasks().items
                 val cat = api().catalog()
@@ -352,7 +360,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     done()
                     return@launch
                 }
-                enqueue("interaction", gson.toJson(body))
+                enqueue("interaction", gson.toJson(body.applyClient(clientId)))
                 _state.value = _state.value.copy(error = ApiErrors.message(e))
             }
             openClient(clientId)
@@ -377,7 +385,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     done()
                     return@launch
                 }
-                enqueue("task.create", gson.toJson(mapOf("client_id" to clientId, "title" to title)))
+                enqueue(
+                    "task.create",
+                    gson.toJson(
+                        mapOf(
+                            "client_id" to clientId,
+                            "title" to title,
+                            "details" to details,
+                            "due_at" to dueAt
+                        )
+                    )
+                )
             }
             openClient(clientId)
             refreshAll()
@@ -513,5 +531,16 @@ private fun WhatsappBody.applyClient(id: Int): Map<String, Any?> = mapOf(
     "source" to source,
     "duration_sec" to duration_sec,
     "data_source" to data_source,
+    "idempotency_key" to idempotency_key
+)
+
+private fun InteractionBody.applyClient(id: Int): Map<String, Any?> = mapOf(
+    "client_id" to id,
+    "type" to type,
+    "comment" to comment,
+    "topic" to topic,
+    "offered" to offered,
+    "result" to result,
+    "next_contact_at" to next_contact_at,
     "idempotency_key" to idempotency_key
 )

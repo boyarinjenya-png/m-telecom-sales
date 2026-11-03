@@ -201,17 +201,15 @@ $existing = $app->db->fetch(
 if (!$existing) {
     $app->db->insert('clients', [
         'uuid' => bin2hex(random_bytes(16)),
-        'owner_id' => $manager['id'],
+        'manager_id' => $manager['id'],
         'created_by' => $manager['id'],
         'type' => 'person',
         'full_name' => 'Айдар Тестовый',
         'phone_primary' => '77015550001',
-        'city' => 'Алматы',
         'address' => 'Алматы, тестовый адрес',
         'need' => 'Тестовая потребность: интернет 100 Мбит',
         'current_provider' => 'Другой оператор',
         'status' => 'new',
-        'source' => 'other',
         'created_at' => $now,
         'updated_at' => $now,
     ]);

@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0B3A5B">
   <title>M-TELECOM SALES</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -18,14 +18,18 @@
           <p>Кабинет руководителя</p>
         </div>
       </div>
-      <label>Логин<input name="login" required></label>
-      <label>Пароль<input name="password" type="password" required></label>
+      <label>Логин<input name="login" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>
+      <label>Пароль<input name="password" type="password" required autocomplete="current-password"></label>
       <p id="login-error" class="form-error" hidden></p>
-      <button type="submit">Войти</button>
+      <button type="submit" class="login-submit">Войти</button>
+      <a class="android-download" href="{{BASE_PATH}}/downloads/m-telecom-sales.apk" download="m-telecom-sales.apk">
+        Скачать приложение для Android
+      </a>
     </form>
   </div>
 
   <div id="app" class="app" hidden>
+    <div id="nav-scrim" class="nav-scrim" hidden></div>
     <aside class="sidebar">
       <div class="brand compact">
         <div class="brand-mark">M</div>

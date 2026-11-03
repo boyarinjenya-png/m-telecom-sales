@@ -236,31 +236,72 @@ private fun AppPane(vm: AppViewModel, activity: MainActivity) {
 private fun HomeScreen(pad: PaddingValues, vm: AppViewModel) {
     val state by vm.state.collectAsState()
     val d = state.dashboard
+    val period = state.dashboardPeriod
+    val periodOptions = listOf(
+        "today" to "Сегодня",
+        "yesterday" to "Вчера",
+        "last_7" to "7 дней",
+        "last_30" to "30 дней",
+        "this_month" to "Текущий месяц",
+        "last_month" to "Предыдущий месяц"
+    )
+    // KPI set aligned with web admin «Обзор» (mtelecom.kz/sales).
     val cards = listOf(
         "Клиенты сейчас" to num(d["clients_total"]),
         "Новые за период" to num(d["clients_new"]),
         "Звонки за период" to num(d["calls_total"]),
-        "Подтв. SIM" to num(d["sim_verified_total"]),
-        "Неподтв. SIM" to num(d["sim_unverified"]),
+        "Подтверждённые SIM" to num(d["sim_verified_total"]),
+        "Неподтверждённые SIM" to num(d["sim_unverified"]),
         "Попытки дозвона" to num(d["sim_verified_attempts"] ?: d["dial_attempts"]),
         "Соединения" to num(d["sim_verified_connected"]),
-        "Разговоры за период" to num(d["talks"]),
-        "Подтв. время" to fmtSec(d["sim_verified_talk_seconds"] ?: d["talk_seconds"]),
-        "WhatsApp-звонки" to num(d["whatsapp_calls"]),
-        "WhatsApp-сообщения" to num(d["whatsapp_messages"]),
+        "Разговоры" to num(d["talks"]),
+        "Подтверждённое время" to fmtSec(d["sim_verified_talk_seconds"] ?: d["talk_seconds"]),
+        "WhatsApp за период" to num(d["whatsapp_total"]),
         "Стали заинтересованными" to num(d["interested"]),
         "КП за период" to num(d["offers"]),
         "Встречи за период" to num(d["meetings"]),
         "Заявки за период" to num(d["applications"]),
         "Подключения за период" to num(d["connections"]),
+        "Отказы за период" to num(d["rejected"]),
+        "Просроченные задачи сейчас" to num(d["overdue_tasks"]),
         "Контакты на сегодня" to num(d["today_contacts"])
     )
-    LazyVerticalGrid(GridCells.Fixed(2), Modifier.padding(pad).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(cards) { (l, n) ->
-            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                Column(Modifier.padding(14.dp)) {
-                    Text(n, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0B3A5B))
-                    Text(l, fontSize = 12.sp, color = Color.Gray)
+    Column(Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp)) {
+        var periodMenu by remember { mutableStateOf(false) }
+        Box(Modifier.padding(top = 8.dp, bottom = 4.dp)) {
+            OutlinedButton(onClick = { periodMenu = true }) {
+                Text("Период: ${periodOptions.firstOrNull { it.first == period }?.second ?: period}")
+            }
+            DropdownMenu(expanded = periodMenu, onDismissRequest = { periodMenu = false }) {
+                periodOptions.forEach { (id, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            periodMenu = false
+                            vm.setDashboardPeriod(id)
+                        }
+                    )
+                }
+            }
+        }
+        Text(
+            "События за выбранный период и отдельно текущий снимок базы.",
+            fontSize = 12.sp,
+            color = Color.Gray,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(cards) { (l, n) ->
+                Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(n, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0B3A5B))
+                        Text(l, fontSize = 12.sp, color = Color.Gray)
+                    }
                 }
             }
         }
@@ -463,7 +504,8 @@ private fun StatusPicker(c: ClientDto, vm: AppViewModel) {
         (listOf(current) + (ui.managerTransitions[current] ?: emptyList())).distinct()
     }
     var expanded by remember { mutableStateOf(false) }
-    var selected by remember { mutableStateOf(current) }
+    // Always mirror server status for this client; do not keep stale optimistic value.
+    val selected = current
     ExposedDropdownMenuBox(expanded, { expanded = !expanded }) {
         OutlinedTextField(
             value = statuses[selected] ?: selected,
@@ -477,9 +519,10 @@ private fun StatusPicker(c: ClientDto, vm: AppViewModel) {
             allowedKeys.forEach { k ->
                 val v = statuses[k] ?: k
                 DropdownMenuItem(text = { Text(v) }, onClick = {
-                    selected = k
                     expanded = false
-                    vm.changeStatus(c.id ?: return@DropdownMenuItem, k)
+                    if (k != current) {
+                        vm.changeStatus(c.id ?: return@DropdownMenuItem, k)
+                    }
                 })
             }
         }
@@ -731,6 +774,12 @@ private fun num(v: Any?): String = when (v) {
 
 private fun fmtSec(v: Any?): String {
     val s = when (v) { is Number -> v.toInt(); else -> v?.toString()?.toDoubleOrNull()?.toInt() ?: 0 }
-    val m = s / 60; val sec = s % 60
-    return if (m > 0) "${m}м ${sec}с" else "${sec}с"
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return when {
+        h > 0 -> "${h}ч ${m}м"
+        m > 0 -> "${m}м ${sec}с"
+        else -> "${sec}с"
+    }
 }

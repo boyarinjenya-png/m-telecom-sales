@@ -40,8 +40,25 @@ object PhoneActions {
     }
 
     fun whatsappCall(context: Context, phone: String) {
-        val url = "https://wa.me/${normalize(phone)}"
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val normalized = normalize(phone)
+        // Prefer WhatsApp voice-call deep link; fall back to chat if unavailable.
+        val callUri = Uri.parse("whatsapp://call?jids=${normalized}@s.whatsapp.net")
+        val callIntent = Intent(Intent.ACTION_VIEW, callUri)
+            .setPackage("com.whatsapp")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(callIntent)
+        } catch (_: Exception) {
+            try {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, callUri)
+                        .setPackage("com.whatsapp.w4b")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (_: Exception) {
+                whatsappChat(context, phone)
+            }
+        }
     }
 
     data class CallLogMatch(val durationSec: Int, val connected: Boolean)

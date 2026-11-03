@@ -280,16 +280,20 @@ final class App
         $r->get('/api/calls', function (Request $req, array $user) {
             $mf = $this->access->managerFilterSql($user, 'c');
             $params = [];
+            $query = $req->query;
+            if (empty($query['from']) && empty($query['to']) && !empty($query['period'])) {
+                [$query['from'], $query['to']] = $this->analytics->period($query);
+            }
             $sql = "SELECT cl.*, u.full_name AS manager_name, c.full_name, c.company_name
                     FROM calls cl JOIN clients c ON c.id = cl.client_id JOIN users u ON u.id = cl.user_id
                     WHERE {$mf}";
-            if (!empty($req->query['from'])) {
+            if (!empty($query['from'])) {
                 $sql .= ' AND cl.started_at >= :from';
-                $params['from'] = $req->query['from'];
+                $params['from'] = $query['from'];
             }
-            if (!empty($req->query['to'])) {
+            if (!empty($query['to'])) {
                 $sql .= ' AND cl.started_at <= :to';
-                $params['to'] = $req->query['to'];
+                $params['to'] = $query['to'];
             }
             $sql .= ' ORDER BY cl.started_at DESC LIMIT 500';
             $items = $this->db->fetchAll($sql, $params);
@@ -302,11 +306,24 @@ final class App
 
         $r->get('/api/whatsapp', function (Request $req, array $user) {
             $mf = $this->access->managerFilterSql($user, 'c');
-            $items = $this->db->fetchAll(
-                "SELECT w.*, u.full_name AS manager_name, c.full_name, c.company_name
+            $params = [];
+            $query = $req->query;
+            if (empty($query['from']) && empty($query['to']) && !empty($query['period'])) {
+                [$query['from'], $query['to']] = $this->analytics->period($query);
+            }
+            $sql = "SELECT w.*, u.full_name AS manager_name, c.full_name, c.company_name
                  FROM whatsapp_events w JOIN clients c ON c.id = w.client_id JOIN users u ON u.id = w.user_id
-                 WHERE {$mf} ORDER BY w.created_at DESC LIMIT 500"
-            );
+                 WHERE {$mf}";
+            if (!empty($query['from'])) {
+                $sql .= ' AND w.created_at >= :from';
+                $params['from'] = $query['from'];
+            }
+            if (!empty($query['to'])) {
+                $sql .= ' AND w.created_at <= :to';
+                $params['to'] = $query['to'];
+            }
+            $sql .= ' ORDER BY w.created_at DESC LIMIT 500';
+            $items = $this->db->fetchAll($sql, $params);
             foreach ($items as &$i) {
                 $i = Catalog::decorateWhatsapp($i);
             }
