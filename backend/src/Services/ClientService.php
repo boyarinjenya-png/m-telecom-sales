@@ -307,6 +307,69 @@ final class ClientService
         return $this->get($id, $user);
     }
 
+    /**
+     * Atomically records an application (optional note + status → application_received).
+     * Idempotent via idempotency_key so offline outbox retries never duplicate.
+     *
+     * @param array<string,mixed> $input
+     * @return array<string,mixed>
+     */
+    public function createApplication(int $id, array $input, array $user, Request $request): array
+    {
+        $this->access->clientOrFail($id, $user);
+        $idem = $input['idempotency_key'] ?? $input['uuid'] ?? null;
+        if (!is_string($idem) || trim($idem) === '') {
+            throw new HttpException('idempotency_key обязателен для заявки');
+        }
+        $idem = trim($idem);
+        $existing = $this->db->fetch(
+            'SELECT * FROM interactions WHERE idempotency_key = :k OR uuid = :u',
+            ['k' => $idem, 'u' => $idem]
+        );
+        if ($existing) {
+            return $this->get($id, $user);
+        }
+
+        $comment = trim((string) ($input['comment'] ?? ''));
+        $now = $this->db->now();
+        $this->db->insert('interactions', [
+            'uuid' => $idem,
+            'client_id' => $id,
+            'object_id' => null,
+            'user_id' => $user['id'],
+            'type' => 'note',
+            'direction' => null,
+            'result' => 'application_received',
+            'interest' => null,
+            'topic' => null,
+            'offered' => null,
+            'next_action' => null,
+            'next_contact_at' => null,
+            'comment' => $comment !== '' ? $comment : 'Создана заявка',
+            'source' => Catalog::SOURCE_MANAGER,
+            'data_source' => Catalog::DATA_SOURCE_MANUAL,
+            'payload_json' => json_encode(['kind' => 'application'], JSON_UNESCAPED_UNICODE),
+            'idempotency_key' => $idem,
+            'amended_from_id' => null,
+            'created_at' => $now,
+        ]);
+
+        $client = $this->access->clientOrFail($id, $user);
+        if ((string) $client['status'] !== 'application_received') {
+            $this->changeStatus($id, 'application_received', $user, $request);
+        } else {
+            $this->db->update('clients', [
+                'updated_at' => $now,
+                'updated_by' => $user['id'],
+            ], ['id' => $id]);
+        }
+
+        $this->audit->log((int) $user['id'], 'client.application', 'client', $id, $request, [
+            'idempotency_key' => $idem,
+        ]);
+        return $this->get($id, $user);
+    }
+
     public function assign(int $id, int $managerId, array $user, Request $request): array
     {
         $this->access->requireAdmin($user);

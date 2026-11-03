@@ -21,6 +21,7 @@ import kz.mtelecom.sales.data.api.VersionResponse
 import kz.mtelecom.sales.data.api.WhatsappBody
 import kz.mtelecom.sales.data.local.OutboxItem
 import kz.mtelecom.sales.data.local.SalesDatabase
+import kz.mtelecom.sales.data.sync.ApplicationOutbox
 import kz.mtelecom.sales.data.sync.SyncWorker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,6 +53,7 @@ data class UiState(
     val error: String? = null,
     val userName: String? = null,
     val dashboard: Map<String, Any?> = emptyMap(),
+    val dashboardPeriod: String = "today",
     val clients: List<ClientDto> = emptyList(),
     val client: ClientDto? = null,
     val tasks: List<TaskDto> = emptyList(),
@@ -131,11 +133,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setDashboardPeriod(period: String) {
+        if (period == _state.value.dashboardPeriod) return
+        _state.value = _state.value.copy(dashboardPeriod = period)
+        refreshAll()
+    }
+
     fun refreshAll() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
             try {
-                val dash = api().dashboard("today").dashboard ?: emptyMap()
+                val period = _state.value.dashboardPeriod
+                val dash = api().dashboard(period).dashboard ?: emptyMap()
                 val clients = api().clients().items
                 val tasks = api().tasks().items
                 val cat = api().catalog()
@@ -352,7 +361,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     done()
                     return@launch
                 }
-                enqueue("interaction", gson.toJson(body))
+                enqueue("interaction", gson.toJson(body.applyClient(clientId)))
                 _state.value = _state.value.copy(error = ApiErrors.message(e))
             }
             openClient(clientId)
@@ -363,21 +372,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun addClientTask(clientId: Int, title: String, details: String, dueAt: String?, done: () -> Unit) {
         viewModelScope.launch {
+            val key = UUID.randomUUID().toString()
+            val payload = mapOf(
+                "client_id" to clientId,
+                "title" to title,
+                "details" to details,
+                "due_at" to dueAt,
+                "idempotency_key" to key
+            )
             try {
-                api().createTask(
-                    mapOf(
-                        "client_id" to clientId,
-                        "title" to title,
-                        "details" to details,
-                        "due_at" to dueAt
-                    )
-                )
+                api().createTask(payload)
             } catch (e: Exception) {
                 if (handleAuth(e)) {
                     done()
                     return@launch
                 }
-                enqueue("task.create", gson.toJson(mapOf("client_id" to clientId, "title" to title)))
+                enqueue("task.create", gson.toJson(payload))
             }
             openClient(clientId)
             refreshAll()
@@ -387,29 +397,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun createApplication(clientId: Int, comment: String, done: () -> Unit) {
         viewModelScope.launch {
+            val key = UUID.randomUUID().toString()
+            val payload = ApplicationOutbox.payload(clientId, comment, key)
             try {
-                if (comment.isNotBlank()) {
-                    api().createInteraction(
-                        clientId,
-                        InteractionBody(
-                            type = "note",
-                            comment = comment,
-                            result = "application_received",
-                            idempotency_key = UUID.randomUUID().toString()
-                        )
-                    )
-                }
-                api().changeStatus(clientId, mapOf("status" to "application_received"))
+                api().createApplication(clientId, payload)
+                openClient(clientId)
+                refreshAll()
+                done()
             } catch (e: Exception) {
                 if (handleAuth(e)) {
                     done()
                     return@launch
                 }
-                _state.value = _state.value.copy(error = ApiErrors.message(e))
+                if (ApiErrors.isQueueable(e)) {
+                    // Persist across process death via Room; stable outbox id prevents double-queue on retries.
+                    enqueue(
+                        ApplicationOutbox.KIND,
+                        gson.toJson(payload),
+                        ApplicationOutbox.outboxIdFor(key)
+                    )
+                    _state.value = _state.value.copy(
+                        error = "Нет сети. Заявка сохранена в очередь и отправится после восстановления связи."
+                    )
+                    done()
+                } else {
+                    _state.value = _state.value.copy(error = ApiErrors.message(e))
+                    done()
+                }
             }
-            openClient(clientId)
-            refreshAll()
-            done()
         }
     }
 
@@ -451,9 +466,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
-    private suspend fun enqueue(kind: String, payload: String) {
+    private suspend fun enqueue(kind: String, payload: String, id: String = UUID.randomUUID().toString()) {
         db.outbox().insert(
-            OutboxItem(UUID.randomUUID().toString(), kind, payload, System.currentTimeMillis())
+            OutboxItem(id, kind, payload, System.currentTimeMillis())
         )
         _state.value = _state.value.copy(pending = db.outbox().count())
         SyncWorker.enqueueNow(getApplication())
@@ -513,5 +528,16 @@ private fun WhatsappBody.applyClient(id: Int): Map<String, Any?> = mapOf(
     "source" to source,
     "duration_sec" to duration_sec,
     "data_source" to data_source,
+    "idempotency_key" to idempotency_key
+)
+
+private fun InteractionBody.applyClient(id: Int): Map<String, Any?> = mapOf(
+    "client_id" to id,
+    "type" to type,
+    "comment" to comment,
+    "topic" to topic,
+    "offered" to offered,
+    "result" to result,
+    "next_contact_at" to next_contact_at,
     "idempotency_key" to idempotency_key
 )

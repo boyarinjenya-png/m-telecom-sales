@@ -22,4 +22,6 @@ git push -u origin main
 
 ## Production
 
-Выкладка на Hoster.KZ — только после проверки `.env`, отдельной БД и HTTPS. Автоматический деплой в ту же папку, что и mtelecom.kz, запрещён.
+Выкладка на Hoster.KZ — только каталог `/sales` (FTP-пользователь `sales_deploy`). Основной сайт `mtelecom.kz` не затрагивается.
+
+Автоматический CI/CD: см. [CICD.md](CICD.md).

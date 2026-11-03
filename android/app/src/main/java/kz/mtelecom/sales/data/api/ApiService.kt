@@ -42,6 +42,12 @@ interface ApiService {
     @POST("api/clients/{id}/status")
     suspend fun changeStatus(@Path("id") id: Int, @Body body: Map<String, String>): ClientResponse
 
+    @POST("api/clients/{id}/application")
+    suspend fun createApplication(
+        @Path("id") id: Int,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): ClientResponse
+
     @POST("api/clients/{id}/calls")
     suspend fun recordCall(@Path("id") id: Int, @Body body: CallBody): CallResponse
 

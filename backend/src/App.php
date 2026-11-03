@@ -6,7 +6,9 @@ namespace MTelecom\Sales;
 use MTelecom\Sales\Auth\AuthService;
 use MTelecom\Sales\Core\Config;
 use MTelecom\Sales\Core\Database;
+use MTelecom\Sales\Core\Env;
 use MTelecom\Sales\Core\HttpException;
+use MTelecom\Sales\Core\Migrator;
 use MTelecom\Sales\Core\Request;
 use MTelecom\Sales\Core\Response;
 use MTelecom\Sales\Core\Router;
@@ -75,6 +77,10 @@ final class App
             if ($static) {
                 return $static;
             }
+            $apk = $this->serveApkDownload($request);
+            if ($apk) {
+                return $apk;
+            }
             $match = $this->router->match($request);
             if (!$match) {
                 if (str_starts_with($request->path, '/api/')) {
@@ -135,6 +141,24 @@ final class App
     {
         $r = $this->router;
         $r->get('/api/health', fn () => ['ok' => true, 'name' => $this->config->get('name'), 'time' => $this->db->now()], false);
+
+        // Deploy-only idempotent schema upgrade. Disabled unless DEPLOY_MIGRATE_TOKEN is set in .env.
+        $r->post('/api/system/migrate', function (Request $req) {
+            $expected = Env::get('DEPLOY_MIGRATE_TOKEN');
+            if ($expected === null || $expected === '') {
+                throw new HttpException('Not found', 404);
+            }
+            $provided = $req->header('x-deploy-token') ?? '';
+            if ($provided === '' || !hash_equals($expected, $provided)) {
+                throw new HttpException('Unauthorized', 401);
+            }
+            (new Migrator($this->db))->up();
+            return [
+                'ok' => true,
+                'schema_version' => Migrator::VERSION,
+                'time' => $this->db->now(),
+            ];
+        }, false);
         $r->get('/api/catalog', fn () => [
             'statuses' => Catalog::STATUSES,
             'results' => Catalog::RESULTS,
@@ -212,6 +236,9 @@ final class App
         $r->post('/api/clients/{id}/status', fn (Request $req, array $user) => [
             'client' => $this->clients->changeStatus((int) $req->param('id'), (string) $req->str('status'), $user, $req),
         ]);
+        $r->post('/api/clients/{id}/application', fn (Request $req, array $user) => [
+            'client' => $this->clients->createApplication((int) $req->param('id'), $req->body, $user, $req),
+        ]);
         $r->post('/api/clients/{id}/assign', fn (Request $req, array $user) => [
             'client' => $this->clients->assign((int) $req->param('id'), (int) $req->input('manager_id'), $user, $req),
         ], true, ['admin']);
@@ -280,16 +307,20 @@ final class App
         $r->get('/api/calls', function (Request $req, array $user) {
             $mf = $this->access->managerFilterSql($user, 'c');
             $params = [];
+            $query = $req->query;
+            if (empty($query['from']) && empty($query['to']) && !empty($query['period'])) {
+                [$query['from'], $query['to']] = $this->analytics->period($query);
+            }
             $sql = "SELECT cl.*, u.full_name AS manager_name, c.full_name, c.company_name
                     FROM calls cl JOIN clients c ON c.id = cl.client_id JOIN users u ON u.id = cl.user_id
                     WHERE {$mf}";
-            if (!empty($req->query['from'])) {
+            if (!empty($query['from'])) {
                 $sql .= ' AND cl.started_at >= :from';
-                $params['from'] = $req->query['from'];
+                $params['from'] = $query['from'];
             }
-            if (!empty($req->query['to'])) {
+            if (!empty($query['to'])) {
                 $sql .= ' AND cl.started_at <= :to';
-                $params['to'] = $req->query['to'];
+                $params['to'] = $query['to'];
             }
             $sql .= ' ORDER BY cl.started_at DESC LIMIT 500';
             $items = $this->db->fetchAll($sql, $params);
@@ -302,11 +333,24 @@ final class App
 
         $r->get('/api/whatsapp', function (Request $req, array $user) {
             $mf = $this->access->managerFilterSql($user, 'c');
-            $items = $this->db->fetchAll(
-                "SELECT w.*, u.full_name AS manager_name, c.full_name, c.company_name
+            $params = [];
+            $query = $req->query;
+            if (empty($query['from']) && empty($query['to']) && !empty($query['period'])) {
+                [$query['from'], $query['to']] = $this->analytics->period($query);
+            }
+            $sql = "SELECT w.*, u.full_name AS manager_name, c.full_name, c.company_name
                  FROM whatsapp_events w JOIN clients c ON c.id = w.client_id JOIN users u ON u.id = w.user_id
-                 WHERE {$mf} ORDER BY w.created_at DESC LIMIT 500"
-            );
+                 WHERE {$mf}";
+            if (!empty($query['from'])) {
+                $sql .= ' AND w.created_at >= :from';
+                $params['from'] = $query['from'];
+            }
+            if (!empty($query['to'])) {
+                $sql .= ' AND w.created_at <= :to';
+                $params['to'] = $query['to'];
+            }
+            $sql .= ' ORDER BY w.created_at DESC LIMIT 500';
+            $items = $this->db->fetchAll($sql, $params);
             foreach ($items as &$i) {
                 $i = Catalog::decorateWhatsapp($i);
             }
@@ -497,6 +541,38 @@ final class App
             default => 'application/octet-stream',
         };
         return Response::file($file, $mime);
+    }
+
+    /**
+     * Serves packaged APK for the login-page download link.
+     * File lives outside git: backend/storage/downloads/m-telecom-sales.apk
+     * (or optional backend/public/downloads/ for Apache direct serve).
+     */
+    private function serveApkDownload(Request $request): ?Response
+    {
+        if (!preg_match('#^/downloads/([a-zA-Z0-9._-]+\.apk)$#', $request->path, $m)) {
+            return null;
+        }
+        $name = $m[1];
+        $candidates = [
+            $this->config->get('storage') . '/downloads/' . $name,
+            $this->root . '/backend/public/downloads/' . $name,
+        ];
+        $file = null;
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate) && is_readable($candidate)) {
+                $file = $candidate;
+                break;
+            }
+        }
+        if ($file === null) {
+            return Response::error('APK-файл ещё не размещён на сервере', 404);
+        }
+        $response = Response::file($file, 'application/vnd.android.package-archive');
+        $response->headers['Content-Disposition'] = 'attachment; filename="' . $name . '"';
+        $response->headers['Cache-Control'] = 'private, no-cache';
+        $response->headers['Content-Length'] = (string) filesize($file);
+        return $response;
     }
 
     private function adminPage(Request $request): Response

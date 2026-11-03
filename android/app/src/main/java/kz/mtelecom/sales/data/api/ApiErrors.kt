@@ -35,6 +35,15 @@ object ApiErrors {
     fun isOffline(error: Throwable): Boolean =
         error is IOException && error !is HttpException
 
+    /** Network / transient server faults — safe to keep in the offline outbox. */
+    fun isQueueable(error: Throwable): Boolean {
+        if (isOffline(error)) return true
+        if (error is HttpException) {
+            return error.code() in setOf(408, 429, 500, 502, 503, 504)
+        }
+        return false
+    }
+
     private fun parseBody(error: HttpException): String? {
         val raw = try {
             error.response()?.errorBody()?.string()

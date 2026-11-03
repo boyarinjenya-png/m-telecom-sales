@@ -80,6 +80,11 @@ composer.phar
 vendor/
 .phpunit.result.cache
 release/
+artifacts/
 
 # OS
 desktop.ini
+
+# Packaged APK for login download link (deploy copies the binary here)
+backend/storage/downloads/*
+!backend/storage/downloads/.gitkeep
