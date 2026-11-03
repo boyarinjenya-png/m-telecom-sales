@@ -37,11 +37,16 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             var failed = 0
             items.forEach { item ->
                 val row = byId[item.id]
-                if (row?.ok == true) {
-                    dao.delete(item.id)
-                } else {
-                    dao.bump(item.id)
-                    failed++
+                when {
+                    row?.ok == true -> dao.delete(item.id)
+                    ApplicationOutbox.isPermanentFailure(row?.status) -> {
+                        // Drop poison pills (forbidden transition, validation) so they do not block the queue forever.
+                        dao.delete(item.id)
+                    }
+                    else -> {
+                        dao.bump(item.id)
+                        failed++
+                    }
                 }
             }
             if (failed > 0) Result.retry() else Result.success()
@@ -68,7 +73,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 UNIQUE_ONE_SHOT,
-                ExistingWorkPolicy.REPLACE,
+                ExistingWorkPolicy.KEEP,
                 request
             )
         }

@@ -35,6 +35,7 @@
 - `GET /api/clients/{id}`
 - `PUT /api/clients/{id}` — конфликт по `base_updated_at` → 409, сервер не затирает молча
 - `POST /api/clients/{id}/status`
+- `POST /api/clients/{id}/application` — `{comment?, idempotency_key}` → заметка + статус `application_received` (идемпотентно; sync kind `client.application`)
 - `POST /api/clients/{id}/assign` (ADMIN)
 - `POST /api/clients/{id}/contacts|phones|objects`
 - `GET /api/clients/{id}/timeline`
@@ -63,3 +64,7 @@
 - `GET /api/sync/pull`, `POST /api/sync/push`
 
 Менеджер получает только свои данные. Скрытие кнопок в UI не заменяет серверную проверку.
+
+### Заявка
+
+`POST /api/clients/{id}/application` — тело: `comment`, обязательный `idempotency_key`. Атомарно создаёт заметку и переводит статус в `application_received`. Используется Android online и sync kind `client.application`.

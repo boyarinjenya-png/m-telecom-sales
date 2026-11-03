@@ -64,6 +64,12 @@ final class SyncService
                         $user,
                         $request
                     ),
+                    'client.application' => $this->clients->createApplication(
+                        (int) ($payload['client_id'] ?? $payload['id'] ?? 0),
+                        $payload,
+                        $user,
+                        $request
+                    ),
                     'call' => $this->interactions->recordCall((int) ($payload['client_id'] ?? 0), $payload, $user, $request),
                     'call.complete' => $this->interactions->completeCall((int) ($payload['id'] ?? $payload['call_id'] ?? 0), $payload, $user, $request),
                     'whatsapp' => $this->interactions->recordWhatsapp((int) ($payload['client_id'] ?? 0), $payload, $user, $request),

@@ -45,7 +45,7 @@ gradlew.bat assembleDebug
 
 Файл: `android/app/build/outputs/apk/debug/app-debug.apk`
 
-5. Release — создайте keystore вне git и соберите `assembleRelease`.
+5. Release — см. [RELEASE-SIGNING.md](RELEASE-SIGNING.md): корпоративный keystore только через env/`keystore.properties` (не в git), затем `./gradlew :app:assembleRelease`.
 
 ## Установка на телефоны менеджеров
 
@@ -64,3 +64,8 @@ gradlew.bat assembleDebug
 - Токен только в Keystore-backed EncryptedSharedPreferences
 - Базовый URL задаётся на экране входа, в APK нет паролей сервера
 - Блокировка менеджера на сервере отзывает все токены
+
+## Подпись Release и WhatsApp
+
+- Корпоративная подпись: [RELEASE-SIGNING.md](RELEASE-SIGNING.md)
+- Ручной чеклист WhatsApp: [WHATSAPP-MANUAL-TEST.md](WHATSAPP-MANUAL-TEST.md)

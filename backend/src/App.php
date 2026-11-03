@@ -216,6 +216,9 @@ final class App
         $r->post('/api/clients/{id}/status', fn (Request $req, array $user) => [
             'client' => $this->clients->changeStatus((int) $req->param('id'), (string) $req->str('status'), $user, $req),
         ]);
+        $r->post('/api/clients/{id}/application', fn (Request $req, array $user) => [
+            'client' => $this->clients->createApplication((int) $req->param('id'), $req->body, $user, $req),
+        ]);
         $r->post('/api/clients/{id}/assign', fn (Request $req, array $user) => [
             'client' => $this->clients->assign((int) $req->param('id'), (int) $req->input('manager_id'), $user, $req),
         ], true, ['admin']);

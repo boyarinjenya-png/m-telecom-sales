@@ -798,5 +798,110 @@ assert_true($seedHasManagerId, 'seed-local.php inserts manager_id not owner_id')
 assert_true(!str_contains($seedSrc, "'city'"), 'seed-local.php does not use missing city column');
 assert_true(!str_contains($seedSrc, "'source'"), 'seed-local.php does not use missing source column');
 
+// --- createApplication online / offline outbox / restart / duplicates ---
+$appClient = req($app, 'POST', '/api/clients', [
+    'type' => 'person',
+    'full_name' => 'Заявка Тест',
+    'phone_primary' => '77019990011',
+    'status' => 'in_progress',
+    'idempotency_key' => 'client-app-flow-1',
+], $mgrTok);
+$appClientId = (int) ($appClient['json']['client']['id'] ?? 0);
+if ($appClientId === 0) {
+    // Force status if create ignored status field
+    $created = req($app, 'POST', '/api/clients', [
+        'type' => 'person',
+        'full_name' => 'Заявка Тест 2',
+        'phone_primary' => '77019990012',
+        'idempotency_key' => 'client-app-flow-2',
+    ], $mgrTok);
+    $appClientId = (int) ($created['json']['client']['id'] ?? 0);
+    req($app, 'POST', '/api/clients/' . $appClientId . '/status', ['status' => 'in_progress'], $mgrTok);
+}
+assert_true($appClientId > 0, 'application flow client exists');
+
+$onlineKey = 'app-online-' . bin2hex(random_bytes(4));
+$onlineApp = req($app, 'POST', '/api/clients/' . $appClientId . '/application', [
+    'comment' => 'Онлайн заявка',
+    'idempotency_key' => $onlineKey,
+], $mgrTok);
+assert_true(
+    ($onlineApp['status'] ?? 0) === 200
+    && ($onlineApp['json']['client']['status'] ?? '') === 'application_received',
+    'online createApplication sets status'
+);
+$onlineAgain = req($app, 'POST', '/api/clients/' . $appClientId . '/application', [
+    'comment' => 'Повтор онлайн',
+    'idempotency_key' => $onlineKey,
+], $mgrTok);
+$appsCount = count($onlineApp['json']['client']['applications'] ?? []);
+$appsCount2 = count($onlineAgain['json']['client']['applications'] ?? []);
+assert_true(
+    ($onlineAgain['status'] ?? 0) === 200 && $appsCount2 === $appsCount,
+    'online createApplication idempotent — no duplicate applications'
+);
+
+// Second client for offline sync simulation (status must allow transition)
+$offClient = req($app, 'POST', '/api/clients', [
+    'type' => 'person',
+    'full_name' => 'Офлайн Заявка',
+    'phone_primary' => '77019990013',
+    'idempotency_key' => 'client-app-offline-1',
+], $mgrTok);
+$offId = (int) ($offClient['json']['client']['id'] ?? 0);
+req($app, 'POST', '/api/clients/' . $offId . '/status', ['status' => 'in_progress'], $mgrTok);
+$offlineKey = 'app-offline-' . bin2hex(random_bytes(4));
+$offlinePayload = [
+    'client_id' => $offId,
+    'comment' => 'Заявка из outbox',
+    'idempotency_key' => $offlineKey,
+    'status' => 'application_received',
+];
+// Simulate outbox push after reconnect
+$syncOff1 = req($app, 'POST', '/api/sync/push', [
+    'ops' => [[
+        'client_op_id' => 'app:' . $offlineKey,
+        'kind' => 'client.application',
+        'payload' => $offlinePayload,
+    ]],
+], $mgrTok);
+assert_true(!empty($syncOff1['json']['results'][0]['ok']), 'offline outbox sync createApplication ok');
+$afterOff = req($app, 'GET', '/api/clients/' . $offId, [], $mgrTok);
+assert_true(($afterOff['json']['client']['status'] ?? '') === 'application_received', 'offline sync sets application status');
+
+// Reconnect / retry after "app restart" — same outbox id + same idempotency key
+$syncOff2 = req($app, 'POST', '/api/sync/push', [
+    'ops' => [[
+        'client_op_id' => 'app:' . $offlineKey,
+        'kind' => 'client.application',
+        'payload' => $offlinePayload,
+    ]],
+], $mgrTok);
+assert_true(!empty($syncOff2['json']['results'][0]['ok']), 're-sync after restart still ok');
+$afterRetry = req($app, 'GET', '/api/clients/' . $offId, [], $mgrTok);
+$offApps = count($afterOff['json']['client']['applications'] ?? []);
+$offAppsRetry = count($afterRetry['json']['client']['applications'] ?? []);
+assert_true($offAppsRetry === $offApps, 're-sync does not duplicate application status events');
+
+// Third push simulates repeated WorkManager delivery
+$syncOff3 = req($app, 'POST', '/api/sync/push', [
+    'ops' => [[
+        'client_op_id' => 'app:' . $offlineKey . '-retry2',
+        'kind' => 'client.application',
+        'payload' => $offlinePayload,
+    ]],
+], $mgrTok);
+assert_true(!empty($syncOff3['json']['results'][0]['ok']), 'third sync with same idempotency_key ok');
+$after3 = req($app, 'GET', '/api/clients/' . $offId, [], $mgrTok);
+assert_true(
+    count($after3['json']['client']['applications'] ?? []) === $offApps,
+    'duplicate protection holds across multiple sync deliveries'
+);
+
+$missingKey = req($app, 'POST', '/api/clients/' . $offId . '/application', [
+    'comment' => 'без ключа',
+], $mgrTok);
+assert_true(($missingKey['status'] ?? 0) >= 400, 'createApplication without idempotency_key rejected');
+
 echo "\nPassed: {$passed}; Failed: {$failed}\n";
 exit($failed === 0 ? 0 : 1);
