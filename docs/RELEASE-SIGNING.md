@@ -63,8 +63,66 @@ keyPassword=…
 1. Проверить подпись: `apksigner verify --print-certs app-release.apk`
 2. Сравнить SHA-256 сертификата с предыдущим релизом.
 3. Увеличить `versionCode` / `versionName` в `android/app/build.gradle.kts` перед каждым новым релизом.
-4. Выложить APK в `backend/storage/downloads/mtelecom-sales.apk` (или путь, указанный в `ANDROID_APK_URL`) — **отдельным деплоем**, не из этого агента без явного запроса.
+4. Выложить APK в `backend/storage/downloads/m-telecom-sales.apk` (или путь из `ANDROID_APK_URL`) — **отдельным деплоем**, не из этого агента без явного запроса.
 5. Записать строку в таблицу `app_versions` на сервере.
+
+## Аудит (ноябрь 2026) — без секретов
+
+| Источник | Найден? | Примечание |
+|---|---|---|
+| Корпоративный `.jks` / `.keystore` в репо / CI env | **Нет** | Только gitignore-шаблоны |
+| `android/keystore.properties` | **Нет** | Файл отсутствует (ожидаемо) |
+| Env `MTS_STORE_FILE`, `MTS_KEY_ALIAS`, пароли | **Не заданы** | Release собирается **unsigned** |
+| `~/.android/debug.keystore` (машина сборки) | Да | Только Debug; не для production |
+
+### Package name
+
+| Build type | `applicationId` |
+|---|---|
+| Debug | `kz.mtelecom.sales.debug` |
+| Release | `kz.mtelecom.sales` |
+
+### Сертификаты известных APK (SHA-256, публичный отпечаток)
+
+| APK | Package | Подпись | SHA-256 (начало) |
+|---|---|---|---|
+| Live `https://mtelecom.kz/sales/downloads/m-telecom-sales.apk` | `kz.mtelecom.sales.debug` | Android Debug | `22b0a65b…d495ae71` |
+| Локальная копия `backend/storage/downloads/m-telecom-sales.apk` | то же | тот же Debug | `22b0a65b…` (совпадает с live) |
+| Локальный `app-debug.apk` (эта VM) | `kz.mtelecom.sales.debug` | Android Debug **этой** машины | `3c88fc3b…6767ac55` (**другой**) |
+| Локальный `app-release-unsigned.apk` | `kz.mtelecom.sales` | нет подписи | — |
+
+**Вывод:** ранее выпущенный/раздаваемый APK — Debug-пакет на чужом debug-ключе. Корпоративного Release-ключа в проекте нет. Новый ключ **не создавался** до согласования с владельцем.
+
+## Матрица обновления без удаления
+
+Обновление «поверх» возможно только при **одинаковом** `applicationId` **и** **одинаковом** сертификате подписи, плюс `versionCode` ≥ установленного.
+
+| Уже установлено у менеджера | Новый APK | Без удаления? |
+|---|---|---|
+| Hosted debug (`…sales.debug`, SHA `22b0…`) | Новый APK с тем же debug-ключом `22b0…` | Да |
+| Hosted debug (`22b0…`) | Debug с этой/другой машины (`3c88…` и т.п.) | **Нет** (другой debug-cert) |
+| Hosted debug (`…sales.debug`) | Release `kz.mtelecom.sales` (любой ключ) | **Нет** (другой package) |
+| Release, ключ A | Release, ключ A, больший `versionCode` | Да |
+| Release, ключ A | Release, ключ B | **Нет** |
+
+Практический план первого корпоративного релиза: менеджеры **удаляют** debug-приложение `kz.mtelecom.sales.debug` и ставят подписанный Release `kz.mtelecom.sales`. Дальше обновления — только тем же корпоративным ключом.
+
+## Если корпоративного ключа ещё нет (не выполнять без согласования)
+
+1. Владелец подтверждает письменно: «создаём первый корпоративный keystore».
+2. Генерация **на защищённой машине владельца** (не в чате агента, не в CI без vault):
+
+```bash
+keytool -genkeypair -v \
+  -keystore /secure/path/mtelecom-sales-release.jks \
+  -alias mtelecom_sales \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storetype JKS
+```
+
+3. Резерв: файл `.jks` + пароли store/key + alias → корпоративный сейф (1Password / Vault), минимум 2 доверенных хранителя, без git/Slack/email.
+4. Передать агенту/CI только через секреты окружения `MTS_*` или локальный gitignored `keystore.properties`.
+5. Собрать Release, сверить `apksigner verify --print-certs`, раздать как первую «чистую» установку.
 
 ## Чего не делать
 
@@ -72,3 +130,4 @@ keyPassword=…
 - Не печатать пароли в CI-логи и ответы ассистента.
 - Не подписывать production-сборку debug-ключом для раздачи менеджерам.
 - Не менять `applicationId` без миграционного плана.
+- Не создавать новый корпоративный ключ, пока владелец не подтвердил отсутствие старого.
