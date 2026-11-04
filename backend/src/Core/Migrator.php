@@ -5,7 +5,7 @@ namespace MTelecom\Sales\Core;
 
 final class Migrator
 {
-    public const VERSION = '5';
+    public const VERSION = '6';
 
     public function __construct(private Database $db)
     {
@@ -306,6 +306,7 @@ final class Migrator
         $this->backfillDataSources();
         $this->ensureMysqlForeignKeys();
         $this->ensureIndexes();
+        $this->ensureUniqueClientIin();
         $this->seedSettings();
         $this->markVersion();
     }
@@ -393,6 +394,36 @@ final class Migrator
             }
             $this->exec("CREATE INDEX {$name} ON {$table} ({$cols})");
         }
+    }
+
+    /**
+     * One IIN belongs to one client. Blank values become NULL so they do not
+     * collide. Existing duplicate IINs stop the migration before the index
+     * is created; no client rows are deleted.
+     */
+    private function ensureUniqueClientIin(): void
+    {
+        $index = 'idx_clients_iin_unique';
+        if ($this->hasIndex($index, 'clients')) {
+            return;
+        }
+        $this->exec("UPDATE clients SET iin = NULL WHERE iin IS NOT NULL AND TRIM(iin) = ''");
+        $duplicates = $this->db->fetchAll(
+            "SELECT iin, COUNT(*) AS cnt FROM clients WHERE iin IS NOT NULL AND iin <> '' GROUP BY iin HAVING COUNT(*) > 1"
+        );
+        if ($duplicates !== []) {
+            $samples = [];
+            foreach (array_slice($duplicates, 0, 10) as $row) {
+                $samples[] = (string) ($row['iin'] ?? '');
+            }
+            $listed = implode(', ', $samples);
+            throw new \RuntimeException(
+                'Миграция остановлена: повторяющийся ИИН у ' . count($duplicates)
+                . ' значений (' . $listed . '). Уникальный индекс не создан, данные клиентов не удалялись. '
+                . 'Устраните повторы и повторите миграцию.'
+            );
+        }
+        $this->exec("CREATE UNIQUE INDEX {$index} ON clients (iin)");
     }
 
     private function hasIndex(string $name, string $table): bool

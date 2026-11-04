@@ -47,6 +47,9 @@ final class UserService
         if ($login === '' || $fullName === '' || strlen($password) < 8) {
             throw new HttpException('Логин, ФИО и пароль от 8 символов обязательны');
         }
+        if (self::loginLength($login) > 64) {
+            throw new HttpException('Логин должен быть не длиннее 64 символов');
+        }
         if ($this->db->fetch('SELECT id FROM users WHERE login = :l', ['l' => $login])) {
             throw new HttpException('Логин уже занят');
         }
@@ -86,8 +89,8 @@ final class UserService
         $data = ['updated_at' => $this->db->now()];
         if (array_key_exists('login', $input)) {
             $login = trim((string) $input['login']);
-            if ($login === '' || strlen($login) > 100) {
-                throw new HttpException('Логин обязателен и должен быть не длиннее 100 символов');
+            if ($login === '' || self::loginLength($login) > 64) {
+                throw new HttpException('Логин обязателен и должен быть не длиннее 64 символов');
             }
             $duplicate = $this->db->fetch(
                 'SELECT id FROM users WHERE login = :login AND id <> :id',
@@ -160,6 +163,9 @@ final class UserService
         }
         if ($user['role'] === Catalog::ROLE_ADMIN) {
             throw HttpException::forbidden('Нельзя заблокировать руководителя этим действием');
+        }
+        if (($user['status'] ?? '') === 'deleted') {
+            throw HttpException::forbidden('Удалённого менеджера нельзя заблокировать или разблокировать');
         }
         $status = $blocked ? Catalog::USER_BLOCKED : Catalog::USER_ACTIVE;
         $this->withManagerSlot(function () use ($blocked, $user, $id, $status): void {
@@ -250,6 +256,11 @@ final class UserService
         if ($count >= Catalog::MAX_ACTIVE_MANAGERS) {
             throw new HttpException('Достигнут лимит 5 активных менеджеров', 409);
         }
+    }
+
+    private static function loginLength(string $login): int
+    {
+        return function_exists('mb_strlen') ? mb_strlen($login) : strlen($login);
     }
 
     private function uuid(): string

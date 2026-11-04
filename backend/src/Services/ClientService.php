@@ -147,59 +147,59 @@ final class ClientService
             }
         }
 
-        if (!$force) {
-            $dups = $this->duplicates->find($input);
-            if ($dups) {
-                throw HttpException::conflict('Найдены возможные дубликаты', [
-                    'duplicates' => $dups,
-                    'require_confirmation' => true,
-                ]);
-            }
-        }
+        $this->rejectIdentityDuplicate($input);
 
         $now = $this->db->now();
         $uuid = $input['uuid'] ?? $this->uuid();
-        $id = $this->db->transaction(function (Database $db) use ($input, $user, $type, $now, $uuid, $idem) {
-            $id = $db->insert('clients', [
-                'uuid' => $uuid,
-                'type' => $type,
-                'status' => $input['status'] ?? 'new',
-                'full_name' => $input['full_name'] ?? null,
-                'iin' => $type === Catalog::TYPE_PERSON ? (preg_replace('/\\D+/', '', (string) ($input['iin'] ?? '')) ?: null) : null,
-                'phone_primary' => $input['phone_primary'] ?? null,
-                'phone_primary_norm' => Catalog::normalizePhone($input['phone_primary'] ?? null),
-                'phone_secondary' => $input['phone_secondary'] ?? null,
-                'phone_secondary_norm' => Catalog::normalizePhone($input['phone_secondary'] ?? null),
-                'address' => $input['address'] ?? null,
-                'lat' => $input['lat'] ?? null,
-                'lng' => $input['lng'] ?? null,
-                'current_provider' => $input['current_provider'] ?? null,
-                'need' => $input['need'] ?? null,
-                'comment' => $input['comment'] ?? null,
-                'company_name' => $input['company_name'] ?? null,
-                'bin' => Catalog::normalizeBin($input['bin'] ?? null),
-                'legal_address' => $input['legal_address'] ?? null,
-                'actual_address' => $input['actual_address'] ?? null,
-                'potential_connections' => $input['potential_connections'] ?? null,
-                'company_needs' => $input['company_needs'] ?? null,
-                'manager_id' => $this->access->isAdmin($user) ? ($input['manager_id'] ?? $user['id']) : $user['id'],
-                'created_by' => $user['id'],
-                'next_contact_at' => $input['next_contact_at'] ?? null,
-                'idempotency_key' => $idem,
-                'created_at' => $now,
-                'updated_at' => $now,
-                'updated_by' => $user['id'],
-            ]);
-            $this->syncRelated($id, $input, $now);
-            $db->insert('status_history', [
-                'client_id' => $id,
-                'user_id' => $user['id'],
-                'from_status' => null,
-                'to_status' => $input['status'] ?? 'new',
-                'created_at' => $now,
-            ]);
-            return $id;
-        });
+        try {
+            $id = $this->db->transaction(function (Database $db) use ($input, $user, $type, $now, $uuid, $idem) {
+                $id = $db->insert('clients', [
+                    'uuid' => $uuid,
+                    'type' => $type,
+                    'status' => $input['status'] ?? 'new',
+                    'full_name' => $input['full_name'] ?? null,
+                    'iin' => $type === Catalog::TYPE_PERSON ? (preg_replace('/\\D+/', '', (string) ($input['iin'] ?? '')) ?: null) : null,
+                    'phone_primary' => $input['phone_primary'] ?? null,
+                    'phone_primary_norm' => Catalog::normalizePhone($input['phone_primary'] ?? null),
+                    'phone_secondary' => $input['phone_secondary'] ?? null,
+                    'phone_secondary_norm' => Catalog::normalizePhone($input['phone_secondary'] ?? null),
+                    'address' => $input['address'] ?? null,
+                    'lat' => $input['lat'] ?? null,
+                    'lng' => $input['lng'] ?? null,
+                    'current_provider' => $input['current_provider'] ?? null,
+                    'need' => $input['need'] ?? null,
+                    'comment' => $input['comment'] ?? null,
+                    'company_name' => $input['company_name'] ?? null,
+                    'bin' => Catalog::normalizeBin($input['bin'] ?? null),
+                    'legal_address' => $input['legal_address'] ?? null,
+                    'actual_address' => $input['actual_address'] ?? null,
+                    'potential_connections' => $input['potential_connections'] ?? null,
+                    'company_needs' => $input['company_needs'] ?? null,
+                    'manager_id' => $this->access->isAdmin($user) ? ($input['manager_id'] ?? $user['id']) : $user['id'],
+                    'created_by' => $user['id'],
+                    'next_contact_at' => $input['next_contact_at'] ?? null,
+                    'idempotency_key' => $idem,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                    'updated_by' => $user['id'],
+                ]);
+                $this->syncRelated($id, $input, $now);
+                $db->insert('status_history', [
+                    'client_id' => $id,
+                    'user_id' => $user['id'],
+                    'from_status' => null,
+                    'to_status' => $input['status'] ?? 'new',
+                    'created_at' => $now,
+                ]);
+                return $id;
+            });
+        } catch (\PDOException $e) {
+            if (!$this->isIinUniqueViolation($e)) {
+                throw $e;
+            }
+            $this->rejectIdentityDuplicate($input);
+            throw HttpException::conflict('Клиент с таким ИИН уже существует');
+        }
 
         $this->audit->log((int) $user['id'], 'client.create', 'client', $id, $request, [
             'type' => $type,
@@ -260,11 +260,26 @@ final class ClientService
         if ($type === Catalog::TYPE_PERSON && array_key_exists('iin', $data)) {
             $digits = preg_replace('/\D+/', '', (string) ($data['iin'] ?? '')) ?? '';
             $data['iin'] = $digits !== '' ? $digits : null;
+            $this->rejectIdentityDuplicate([
+                'type' => Catalog::TYPE_PERSON,
+                'iin' => $data['iin'],
+            ], $id);
         }
         if (array_key_exists('manager_id', $input) && $this->access->isAdmin($user)) {
             $data['manager_id'] = $input['manager_id'];
         }
-        $this->db->update('clients', $data, ['id' => $id]);
+        try {
+            $this->db->update('clients', $data, ['id' => $id]);
+        } catch (\PDOException $e) {
+            if (!$this->isIinUniqueViolation($e)) {
+                throw $e;
+            }
+            $this->rejectIdentityDuplicate([
+                'type' => Catalog::TYPE_PERSON,
+                'iin' => $data['iin'] ?? null,
+            ], $id);
+            throw HttpException::conflict('Клиент с таким ИИН уже существует');
+        }
         if (isset($input['phones']) || isset($input['contacts']) || isset($input['objects'])) {
             $this->syncRelated($id, $input, $now, false);
         }
@@ -494,6 +509,25 @@ final class ClientService
                 throw new HttpException('БИН должен содержать 12 цифр');
             }
         }
+    }
+
+    /** @param array<string,mixed> $input */
+    private function rejectIdentityDuplicate(array $input, ?int $excludeId = null): void
+    {
+        $dups = $this->duplicates->find($input, $excludeId);
+        if ($dups === []) {
+            return;
+        }
+        throw HttpException::conflict('Найдены возможные дубликаты', [
+            'duplicates' => $dups,
+            'require_confirmation' => false,
+        ]);
+    }
+
+    private function isIinUniqueViolation(\PDOException $e): bool
+    {
+        $message = $e->getMessage();
+        return str_contains($message, 'clients.iin') || str_contains($message, 'idx_clients_iin_unique');
     }
 
     /** @param array<string,mixed> $input */
