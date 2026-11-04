@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS clients (
   type VARCHAR(16) NOT NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'new',
   full_name VARCHAR(190) DEFAULT NULL,
+  iin VARCHAR(12) DEFAULT NULL,
   phone_primary VARCHAR(32) DEFAULT NULL,
   phone_primary_norm VARCHAR(32) DEFAULT NULL,
   phone_secondary VARCHAR(32) DEFAULT NULL,
