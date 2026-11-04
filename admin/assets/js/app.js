@@ -675,8 +675,9 @@
         const rows = (c.connections || []).map((t) => `<tr>
           <td>${esc(t.created_at)}</td><td>${esc(t.user_name)}</td>
           <td>${esc(t.from_label || '—')} → ${esc(t.to_label)}</td></tr>`);
-        return `<p class="muted">Подключения — переходы в «В процессе подключения» и «Подключён». Статус «Подключён» подтверждает руководитель.</p>
-          ${rows.length ? table(['Дата', 'Кто', 'Переход'], rows) : emptyMsg('Подключений по этому клиенту нет.')}`;
+        return `<p class="muted">Подключения — отдельная фиксация начала работ и дальнейшего перехода клиента к подключению.</p>
+          <button type="button" class="btn" id="client-start-connection" ${c.status === 'connecting' || c.status === 'connected' ? 'disabled' : ''}>+ Зафиксировать начало подключения</button>
+          ${rows.length ? table(['Дата', 'Кто', 'Переход'], rows) : emptyMsg('Подключений по этому клиенту пока нет.')}`;
       }
       const hist = (c.timeline || []).map((t) => `<li>
         <strong>${esc(t.type_label)}</strong> · ${esc(t.created_at)} · ${esc(t.user_name)}
@@ -931,6 +932,21 @@
       document.querySelectorAll('#ctabs .tab').forEach((b) => { b.onclick = () => drawTab(b.dataset.ctab); });
       const bindSection = () => {
         if ($('client-create-application')) $('client-create-application').onclick = () => showForm('application');
+        if ($('client-start-connection')) $('client-start-connection').onclick = async () => {
+          const button = $('client-start-connection');
+          button.disabled = true;
+          try {
+            await api(`/api/clients/${id}/status`, {
+              method: 'POST',
+              body: JSON.stringify({ status: 'connecting' })
+            });
+            reload();
+          } catch (err) {
+            button.disabled = false;
+            const section = $('csec');
+            section.insertAdjacentHTML('afterbegin', `<p class="form-error">${esc(err.message)}</p>`);
+          }
+        };
         if ($('save-info')) $('save-info').onclick = async () => {
           const body = {
             phone_primary: $('e_phone_primary').value, phone_secondary: $('e_phone_secondary').value,
