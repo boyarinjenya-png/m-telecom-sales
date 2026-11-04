@@ -5,7 +5,7 @@ namespace MTelecom\Sales\Core;
 
 final class Migrator
 {
-    public const VERSION = '4';
+    public const VERSION = '5';
 
     public function __construct(private Database $db)
     {
@@ -74,6 +74,7 @@ final class Migrator
             type VARCHAR(16) NOT NULL,
             status VARCHAR(32) NOT NULL DEFAULT 'new',
             full_name VARCHAR(190) DEFAULT NULL,
+            iin VARCHAR(12) DEFAULT NULL,
             phone_primary VARCHAR(32) DEFAULT NULL,
             phone_primary_norm VARCHAR(32) DEFAULT NULL,
             phone_secondary VARCHAR(32) DEFAULT NULL,
@@ -295,6 +296,7 @@ final class Migrator
             applied_at {$dt} NOT NULL
         ){$engine}");
 
+        $this->ensureColumn('clients', 'iin', $sqlite ? 'TEXT DEFAULT NULL' : 'VARCHAR(12) DEFAULT NULL');
         $this->ensureColumn('uploads', 'client_id', $sqlite ? 'INTEGER DEFAULT NULL' : 'INT UNSIGNED DEFAULT NULL');
         $this->ensureColumn('calls', 'channel', $sqlite ? "TEXT NOT NULL DEFAULT 'sim'" : "VARCHAR(16) NOT NULL DEFAULT 'sim'");
         $this->ensureColumn('calls', 'data_source', $sqlite ? "TEXT NOT NULL DEFAULT 'unverified'" : "VARCHAR(32) NOT NULL DEFAULT 'unverified'");
@@ -433,7 +435,10 @@ final class Migrator
             }
             return false;
         }
-        $row = $this->db->fetch("SHOW COLUMNS FROM `{$table}` LIKE :c", ['c' => $column]);
+        $row = $this->db->fetch(
+            'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c',
+            ['t' => $table, 'c' => $column]
+        );
         return $row !== null;
     }
 
