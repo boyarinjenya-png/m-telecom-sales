@@ -915,5 +915,21 @@ $missingKey = req($app, 'POST', '/api/clients/' . $offId . '/application', [
 ], $mgrTok);
 assert_true(($missingKey['status'] ?? 0) >= 400, 'createApplication without idempotency_key rejected');
 
+// --- manager soft-delete: revoke access, preserve history, hide from active lists ---
+$manager2Id = (int) ($mgr2['json']['user']['id'] ?? 0);
+$managerDelete = req($app, 'DELETE', '/api/users/' . $manager2Id, [], $adminToken);
+assert_true(($managerDelete['status'] ?? 0) === 200 && !empty($managerDelete['json']['deleted']), 'admin soft-deletes manager');
+$managerDeletedRow = $app->db->fetch('SELECT id, status FROM users WHERE id = :id', ['id' => $manager2Id]);
+assert_true($managerDeletedRow && $managerDeletedRow['status'] === 'deleted', 'deleted manager row retained for history');
+$managerOldSession = req($app, 'GET', '/api/auth/me', [], $t2);
+assert_true(($managerOldSession['status'] ?? 0) === 401, 'deleted manager existing token revoked');
+$managerRelogin = req($app, 'POST', '/api/auth/login', ['login' => 'manager2', 'password' => 'Manager#2']);
+assert_true(($managerRelogin['status'] ?? 0) === 403, 'deleted manager cannot log in');
+$activeUsers = req($app, 'GET', '/api/users', [], $adminToken);
+$deletedVisible = array_filter($activeUsers['json']['users'] ?? [], static fn ($u) => (int) ($u['id'] ?? 0) === $manager2Id);
+assert_true(count($deletedVisible) === 0, 'deleted manager hidden from active user list');
+$managerCannotDelete = req($app, 'DELETE', '/api/users/' . (int) ($mgr1['json']['user']['id'] ?? 0), [], $t1);
+assert_true(($managerCannotDelete['status'] ?? 0) === 403, 'manager cannot delete another manager');
+
 echo "\nPassed: {$passed}; Failed: {$failed}\n";
 exit($failed === 0 ? 0 : 1);
