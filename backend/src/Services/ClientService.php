@@ -257,6 +257,10 @@ final class ClientService
         if (array_key_exists('bin', $input)) {
             $data['bin'] = Catalog::normalizeBin($input['bin']);
         }
+        if ($type === Catalog::TYPE_PERSON && array_key_exists('iin', $data)) {
+            $digits = preg_replace('/\D+/', '', (string) ($data['iin'] ?? '')) ?? '';
+            $data['iin'] = $digits !== '' ? $digits : null;
+        }
         if (array_key_exists('manager_id', $input) && $this->access->isAdmin($user)) {
             $data['manager_id'] = $input['manager_id'];
         }

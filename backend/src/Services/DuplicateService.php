@@ -18,7 +18,7 @@ final class DuplicateService
      */
     public function find(array $input, ?int $excludeId = null): array
     {
-        $type = $input['type'] ?? Catalog::TYPE_PERSON;
+        $type = $this->resolveType($input);
         $matches = [];
 
         // Телефон не является уникальным идентификатором: один номер может
@@ -58,5 +58,22 @@ final class DuplicateService
         }
 
         return $matches;
+    }
+
+    /**
+     * Identity duplicates follow the client type. An omitted type is inferred
+     * from a BIN so older callers that send only a company number still match.
+     * Phone numbers are never an identity key.
+     */
+    private function resolveType(array $input): string
+    {
+        $explicit = (string) ($input['type'] ?? '');
+        if ($explicit === Catalog::TYPE_PERSON || $explicit === Catalog::TYPE_COMPANY) {
+            return $explicit;
+        }
+        if (Catalog::normalizeBin(isset($input['bin']) ? (string) $input['bin'] : null)) {
+            return Catalog::TYPE_COMPANY;
+        }
+        return Catalog::TYPE_PERSON;
     }
 }

@@ -322,7 +322,7 @@
         else if (act === 'delete') await api(`/api/users/${id}`, { method: 'DELETE' });
         else if (act === 'reset') {
           const result = await api(`/api/users/${id}/reset-password`, { method: 'POST', body: '{}' });
-          window.alert(`Временный пароль для ${manager?.full_name || 'менеджера'}:\\n\\n${result.temporary_password}\\n\\nСкопируйте его сейчас. Повторно посмотреть пароль будет невозможно.`);
+          window.alert(`Временный пароль для ${manager?.full_name || 'менеджера'}:\n\n${result.temporary_password}\n\nСкопируйте его сейчас. Повторно посмотреть пароль будет невозможно.`);
         } else await api(`/api/users/${id}/${act}`, { method: 'POST', body: '{}' });
         await route();
       } catch (err) {
@@ -463,7 +463,7 @@
           body = {
             type: 'person',
             full_name: fullName,
-            iin: ($('c_iin').value || '').replace(/\\D/g, '') || null,
+            iin: ($('c_iin').value || '').replace(/\D/g, '') || null,
             phone_primary: phone,
             phone_secondary: ($('c_phone_secondary').value || '').trim() || null,
             address: ($('c_address').value || '').trim() || null,
@@ -1035,7 +1035,7 @@
             current_provider: $('e_current_provider').value, comment: $('e_comment').value
           };
           if (person) {
-            body.full_name = $('e_full_name').value; body.iin = $('e_iin').value.replace(/\\D/g, '') || null; body.address = $('e_address').value; body.need = $('e_need').value;
+            body.full_name = $('e_full_name').value; body.iin = $('e_iin').value.replace(/\D/g, '') || null; body.address = $('e_address').value; body.need = $('e_need').value;
           } else {
             body.company_name = $('e_company_name').value; body.bin = $('e_bin').value;
             body.legal_address = $('e_legal_address').value; body.actual_address = $('e_actual_address').value;

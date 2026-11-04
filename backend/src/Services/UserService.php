@@ -23,7 +23,10 @@ final class UserService
     public function list(array $actor): array
     {
         $this->access->requireAdmin($actor);
-        // Soft-deleted accounts are retained for historical references but hidden from active user pickers.\n        $rows = $this->db->fetchAll(\"SELECT * FROM users WHERE status <> 'deleted' ORDER BY role, full_name\");
+        // Soft-deleted accounts stay in the database for history and are hidden from active lists.
+        $rows = $this->db->fetchAll(
+            "SELECT * FROM users WHERE status <> 'deleted' ORDER BY role, full_name"
+        );
         return array_map([$this->auth, 'publicUser'], $rows);
     }
 
