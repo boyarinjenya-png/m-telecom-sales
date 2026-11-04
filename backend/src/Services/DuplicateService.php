@@ -58,4 +58,5 @@ final class DuplicateService
         }
 
         return $matches;
-    }}
+    }
+}
