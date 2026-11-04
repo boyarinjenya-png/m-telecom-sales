@@ -27,12 +27,13 @@ final class ClientService
         $where = [$this->access->managerFilterSql($user, 'c')];
         $params = [];
         if (!empty($filters['q'])) {
-            $where[] = '(c.full_name LIKE :q OR c.company_name LIKE :q2 OR c.phone_primary LIKE :q3 OR c.bin LIKE :q4)';
+            $where[] = '(c.full_name LIKE :q OR c.company_name LIKE :q2 OR c.phone_primary LIKE :q3 OR c.bin LIKE :q4 OR c.iin LIKE :q5)';
             $like = '%' . $filters['q'] . '%';
             $params['q'] = $like;
             $params['q2'] = $like;
             $params['q3'] = $like;
             $params['q4'] = $like;
+            $params['q5'] = $like;
         }
         if (!empty($filters['type'])) {
             $where[] = 'c.type = :type';
