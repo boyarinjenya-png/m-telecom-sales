@@ -267,6 +267,7 @@ try {
 
     $files = [];
     foreach ($commits as $version => $rev) {
+        $version = (string) $version;
         $dest = $tmp . '/Migrator-v' . $version . '.php';
         extract_migrator($root, $rev, $dest);
         assert_source($dest, $version, $version === '6');
