@@ -51,7 +51,7 @@ final class ClientService
             $where[] = "EXISTS (
                 SELECT 1 FROM interactions ai
                 WHERE ai.client_id = c.id
-                  AND (ai.result = 'application_received' OR ai.payload_json LIKE '%\\"kind\\":\\"application\\"%')
+                  AND ai.result = 'application_received'
             )";
         }
         if (!empty($filters['status_event']) && !empty($filters['from']) && !empty($filters['to'])) {
