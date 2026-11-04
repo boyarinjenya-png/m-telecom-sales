@@ -1,0 +1,88 @@
+# Isolated MariaDB 10.4 check for schema 4 → 5 → 6.
+# Runs only when this branch is pushed, or by manual dispatch of this workflow.
+# It does not run on main, does not use secrets, and does not start Deploy production.
+name: MariaDB 10.4 migration test
+
+on:
+  push:
+    branches:
+      - test/mariadb-10-4-migrations
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mariadb-migration-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mariadb:
+    name: mariadb-10.4
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mariadb:
+        image: mariadb:10.4
+        env:
+          MYSQL_ROOT_PASSWORD: migtest
+          MYSQL_DATABASE: mig_boot
+          MARIADB_ROOT_PASSWORD: migtest
+          MARIADB_DATABASE: mig_boot
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pmigtest --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: "8.3"
+          extensions: mbstring, openssl, pdo, pdo_mysql, json, curl
+          coverage: none
+
+      - name: Guard workflow scope
+        run: |
+          set -euo pipefail
+          test "${GITHUB_WORKFLOW}" = "MariaDB 10.4 migration test"
+          test "${GITHUB_REF}" = "refs/heads/test/mariadb-10-4-migrations" -o "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
+
+      - name: PHP syntax
+        run: |
+          set -euo pipefail
+          php -l scripts/ci/mariadb-migrate-once.php
+          php -l scripts/ci/mariadb-migration-test.php
+
+      - name: Run MariaDB 10.4 migration tests
+        env:
+          MIG_HOST: 127.0.0.1
+          MIG_PORT: "3306"
+          MIG_USER: root
+          MIG_PASS: migtest
+        run: php scripts/ci/mariadb-migration-test.php
+
+  sqlite:
+    name: sqlite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: "8.3"
+          extensions: mbstring, openssl, pdo, pdo_sqlite, json, curl
+          coverage: none
+
+      - name: Existing SQLite suite
+        run: php tests/run.php
