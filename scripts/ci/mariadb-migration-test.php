@@ -112,6 +112,23 @@ function extract_migrator(string $root, string $rev, string $dest): void
     file_put_contents($dest, $out);
 }
 
+function adapt_v4_for_mariadb104(string $file): void
+{
+    $src = (string) file_get_contents($file);
+    $from = '$row = $this->db->fetch("SHOW COLUMNS FROM `{$table}` LIKE :c", [\'c\' => $column]);';
+    $to = '$row = $this->db->fetch(' . "\n"
+        . "            'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c',\n"
+        . "            ['t' => \$table, 'c' => \$column]\n"
+        . '        );';
+    $count = 0;
+    $updated = str_replace($from, $to, $src, $count);
+    if ($count !== 1) {
+        throw new RuntimeException('Version 4 source no longer contains the SHOW COLUMNS placeholder');
+    }
+    file_put_contents($file, $updated);
+    say('SOURCE v4 note: MariaDB 10.4 rejects a placeholder in SHOW COLUMNS; the temp copy uses the information_schema check already shipped in 1d9d687. Versions 5 and 6 stay unmodified.');
+}
+
 function assert_source(string $file, string $version, bool $unique): void
 {
     $src = (string) file_get_contents($file);
@@ -271,6 +288,9 @@ try {
         $dest = $tmp . '/Migrator-v' . $version . '.php';
         extract_migrator($root, $rev, $dest);
         assert_source($dest, $version, $version === '6');
+        if ($version === '4') {
+            adapt_v4_for_mariadb104($dest);
+        }
         $files[$version] = $dest;
         say('SOURCE v' . $version . ' ' . $rev);
     }
