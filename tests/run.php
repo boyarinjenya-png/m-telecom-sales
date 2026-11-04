@@ -112,6 +112,7 @@ assert_true($usersAsMgr['status'] === 403, 'manager cannot list users');
 $c1 = req($app, 'POST', '/api/clients', [
     'type' => 'person',
     'full_name' => 'Иван Петров',
+    'iin' => '001122334455',
     'phone_primary' => '+7 701 111 22 33',
     'address' => 'Алматы, ул. Абая 1',
     'lat' => 43.238949,
@@ -121,7 +122,14 @@ $c1 = req($app, 'POST', '/api/clients', [
     'idempotency_key' => 'client-ivan-1',
 ], $t1);
 assert_true($c1['status'] === 200 && !empty($c1['json']['client']['id']), 'manager creates person');
+assert_true(($c1['json']['client']['iin'] ?? '') === '001122334455', 'person IIN is saved and returned');
 $clientId = (int) ($c1['json']['client']['id'] ?? 0);
+
+$badIin = req($app, 'POST', '/api/clients', [
+    'type' => 'person', 'full_name' => 'Тест ИИН', 'phone_primary' => '77019998877',
+    'iin' => '12345', 'force' => true, 'idempotency_key' => 'bad-iin-test',
+], $t1);
+assert_true(($badIin['status'] ?? 0) === 400, 'invalid IIN length is rejected');
 
 $c1dupReq = req($app, 'POST', '/api/clients', [
     'type' => 'person',
