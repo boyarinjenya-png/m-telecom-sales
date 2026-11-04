@@ -665,10 +665,11 @@
       }
       if (tab === 'applications') {
         const rows = (c.applications || []).map((t) => `<tr>
-          <td>${esc(t.created_at)}</td><td>${esc(t.user_name)}</td>
-          <td>${esc(t.from_label || '—')} → ${esc(t.to_label)}</td></tr>`);
-        return `<p class="muted">Заявки — переходы статуса «Заявка получена» по этому клиенту.</p>
-          ${rows.length ? table(['Дата', 'Кто', 'Переход'], rows) : emptyMsg('Заявок по этому клиенту нет.')}`;
+          <td>${esc(t.created_at)}</td><td>${esc(t.user_name || '')}</td>
+          <td>${esc(t.comment || 'Заявка создана')}</td></tr>`);
+        return `<p class="muted">Заявки, зарегистрированные по этому клиенту.</p>
+          <button type="button" id="client-create-application">+ Создать заявку</button>
+          ${rows.length ? table(['Дата', 'Менеджер', 'Комментарий'], rows) : emptyMsg('Заявок по этому клиенту пока нет.')}`;
       }
       if (tab === 'connections') {
         const rows = (c.connections || []).map((t) => `<tr>
@@ -870,13 +871,10 @@
               result: 'offer_sent', idempotency_key: 'web-offer-' + Date.now()
             }) });
           } else if (name === 'application') {
-            if ($('f_comment').value) {
-              await api(`/api/clients/${id}/interactions`, { method: 'POST', body: JSON.stringify({
-                type: 'note', comment: $('f_comment').value, result: 'application_received',
-                idempotency_key: 'web-app-note-' + Date.now()
-              }) });
-            }
-            await api(`/api/clients/${id}/status`, { method: 'POST', body: JSON.stringify({ status: 'application_received' }) });
+            await api(`/api/clients/${id}/application`, { method: 'POST', body: JSON.stringify({
+              comment: $('f_comment').value,
+              idempotency_key: 'web-application-' + crypto.randomUUID()
+            }) });
           }
           reload();
         } catch (err) {
@@ -932,6 +930,7 @@
       };
       document.querySelectorAll('#ctabs .tab').forEach((b) => { b.onclick = () => drawTab(b.dataset.ctab); });
       const bindSection = () => {
+        if ($('client-create-application')) $('client-create-application').onclick = () => showForm('application');
         if ($('save-info')) $('save-info').onclick = async () => {
           const body = {
             phone_primary: $('e_phone_primary').value, phone_secondary: $('e_phone_secondary').value,
@@ -1055,7 +1054,7 @@
 
   async function pageStatusList(root, status, title) {
     const ov = (await api('/api/analytics/overview?' + qs())).overview;
-    const d = await api('/api/clients?' + qs({ status_event: status, per_page: 200 }));
+    const d = await api('/api/clients?' + qs(status === 'application_received' ? { application_event: 1, per_page: 200 } : { status_event: status, per_page: 200 }));
     const periodN = (ov.by_status_period || {})[status] || 0;
     const nowN = (ov.by_status || {})[status] || 0;
     root.innerHTML = `<p class="muted">За выбранный период переходов: ${periodN}. Сейчас в этом статусе: ${nowN}.</p>
