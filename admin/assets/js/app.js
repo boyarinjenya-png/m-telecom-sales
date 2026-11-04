@@ -709,8 +709,12 @@
         </div>
       </div>
       <div id="cform"></div>
-      <div class="tabs" id="ctabs">${tabs.map(([k, l]) =>
-        `<button type="button" class="tab${k === savedTab ? ' active' : ''}" data-ctab="${k}">${esc(l)}</button>`).join('')}</div>
+      <div class="client-section-picker">
+        <label for="client-section-select">Разделы клиента</label>
+        <select id="client-section-select">
+          ${tabs.map(([k, l]) => `<option value="${k}" ${k === savedTab ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+        </select>
+      </div>
       <div id="csec">${sectionHtml(savedTab)}</div>`;
 
     const forms = {
@@ -884,10 +888,11 @@
     openHtml('Карточка клиента', html, () => {
       const drawTab = (tab) => {
         state.clientTab = tab;
-        document.querySelectorAll('#ctabs .tab').forEach((b) => b.classList.toggle('active', b.dataset.ctab === tab));
+        $('client-section-select').value = tab;
         $('csec').innerHTML = sectionHtml(tab);
         bindSection();
       };
+      if ($('client-section-select')) $('client-section-select').onchange = (e) => drawTab(e.target.value);
       document.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => {
         if ($('more-menu')) $('more-menu').hidden = true;
         showForm(b.dataset.act);
