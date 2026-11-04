@@ -209,6 +209,7 @@ final class App
         $r->get('/api/users', fn (Request $req, array $user) => ['users' => $this->users->list($user)], true, ['admin']);
         $r->post('/api/users', fn (Request $req, array $user) => ['user' => $this->users->create($req->body, $user, $req)], true, ['admin']);
         $r->patch('/api/users/{id}', fn (Request $req, array $user) => ['user' => $this->users->update((int) $req->param('id'), $req->body, $user, $req)], true, ['admin']);
+        $r->post('/api/users/{id}/reset-password', fn (Request $req, array $user) => $this->users->resetManagerPassword((int) $req->param('id'), $user, $req), true, ['admin']);
         $r->delete('/api/users/{id}', fn (Request $req, array $user) => $this->users->deleteManager((int) $req->param('id'), $user, $req), true, ['admin']);
         $r->post('/api/users/{id}/block', fn (Request $req, array $user) => ['user' => $this->users->setBlocked((int) $req->param('id'), true, $user, $req)], true, ['admin']);
         $r->post('/api/users/{id}/unblock', fn (Request $req, array $user) => ['user' => $this->users->setBlocked((int) $req->param('id'), false, $user, $req)], true, ['admin']);
