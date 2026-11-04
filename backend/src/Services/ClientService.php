@@ -157,6 +157,7 @@ final class ClientService
                 'type' => $type,
                 'status' => $input['status'] ?? 'new',
                 'full_name' => $input['full_name'] ?? null,
+                'iin' => $type === Catalog::TYPE_PERSON ? (preg_replace('/\\D+/', '', (string) ($input['iin'] ?? '')) ?: null) : null,
                 'phone_primary' => $input['phone_primary'] ?? null,
                 'phone_primary_norm' => Catalog::normalizePhone($input['phone_primary'] ?? null),
                 'phone_secondary' => $input['phone_secondary'] ?? null,
@@ -229,7 +230,7 @@ final class ClientService
 
         $now = $this->db->now();
         $fields = [
-            'full_name', 'phone_primary', 'phone_secondary', 'address', 'lat', 'lng',
+            'full_name', 'iin', 'phone_primary', 'phone_secondary', 'address', 'lat', 'lng',
             'current_provider', 'need', 'comment', 'company_name', 'legal_address',
             'actual_address', 'potential_connections', 'company_needs', 'next_contact_at',
         ];
@@ -467,6 +468,12 @@ final class ClientService
         } else {
             if (!$partial && trim((string) ($input['company_name'] ?? '')) === '') {
                 throw new HttpException('Укажите название компании');
+            }
+        }
+        if ($type === Catalog::TYPE_PERSON && !empty($input['iin'])) {
+            $iin = preg_replace('/\\D+/', '', (string) $input['iin']);
+            if ($iin === null || strlen($iin) !== 12) {
+                throw new HttpException('ИИН должен содержать 12 цифр');
             }
         }
         if (!empty($input['bin'])) {
