@@ -213,15 +213,20 @@
   }
 
   async function pageManagers(root) {
-    const users = (await api('/api/users')).users.filter((u) => u.role === 'manager');
-    const cmp = (await api('/api/analytics/managers?' + qs())).managers;
+    const users = (await api('/api/users')).users.filter((u) => u.role === 'manager' && u.status !== 'deleted');
+    const visibleIds = new Set(users.map((u) => Number(u.id)));
+    const cmp = (await api('/api/analytics/managers?' + qs())).managers.filter((u) => visibleIds.has(Number(u.id)));
     root.innerHTML = `<div class="toolbar"><button id="add-manager">Добавить менеджера</button></div>
-      <div class="card">${table(['ФИО', 'Логин', 'Телефон', 'Статус', ''], users.map((u) => `<tr>
+      <div class="card">${table(['ФИО', 'Логин', 'Телефон', 'Статус', 'Последний вход', 'Управление'], users.map((u) => `<tr>
         <td>${esc(u.full_name)}</td><td>${esc(u.login)}</td><td>${esc(u.phone || '')}</td>
         <td>${u.status === 'blocked' ? '<span class="badge danger">Заблокирован</span>' : '<span class="badge ok">Активен</span>'}</td>
+        <td>${esc(u.last_login_at || 'Ещё не входил')}</td>
         <td>
+          <button class="btn secondary" data-act="edit" data-id="${u.id}">Учётная запись</button>
+          <button class="btn secondary" data-act="reset" data-id="${u.id}" data-name="${esc(u.full_name)}">Сбросить пароль</button>
           <button class="btn secondary" data-act="${u.status === 'blocked' ? 'unblock' : 'block'}" data-id="${u.id}">${u.status === 'blocked' ? 'Разблокировать' : 'Заблокировать'}</button>
           <button class="btn secondary" data-act="revoke" data-id="${u.id}">Отозвать сессии</button>
+          <button class="btn danger" data-act="delete" data-id="${u.id}" data-name="${esc(u.full_name)}">Удалить</button>
         </td></tr>`))}</div>
       <div class="card"><h3>Эффективность</h3>${renderManagerTable(cmp)}</div>`;
     $('add-manager').onclick = () => openForm('Новый менеджер', [
@@ -232,9 +237,47 @@
     });
     root.querySelectorAll('[data-act]').forEach((btn) => btn.onclick = async () => {
       const id = btn.dataset.id, act = btn.dataset.act;
-      if (act === 'revoke') await api(`/api/users/${id}/revoke-sessions`, { method: 'POST', body: '{}' });
-      else await api(`/api/users/${id}/${act}`, { method: 'POST', body: '{}' });
-      route();
+      const manager = users.find((u) => Number(u.id) === Number(id));
+      if (act === 'edit') {
+        openHtml('Учётная запись менеджера', `<h3>Учётная запись менеджера</h3>
+          <label>ФИО<input id="manager-full-name" value="${esc(manager?.full_name || '')}" required></label>
+          <label>Логин<input id="manager-login" value="${esc(manager?.login || '')}" required></label>
+          <label>Телефон<input id="manager-phone" value="${esc(manager?.phone || '')}"></label>
+          <p class="muted">Пароль здесь не отображается. Для смены используйте отдельную кнопку сброса пароля.</p>
+          <button id="manager-save">Сохранить изменения</button>`, () => {
+            $('manager-save').onclick = async () => {
+              try {
+                await api(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify({
+                  full_name: $('manager-full-name').value.trim(),
+                  login: $('manager-login').value.trim(),
+                  phone: $('manager-phone').value.trim()
+                }) });
+                closeModal();
+                await route();
+              } catch (err) { window.alert(err.message || 'Не удалось сохранить'); }
+            };
+          });
+        return;
+      }
+      if (act === 'reset') {
+        const name = btn.dataset.name || 'менеджера';
+        if (!window.confirm(`Сбросить пароль для «${name}»? Все его активные сессии будут завершены.`)) return;
+      }
+      if (act === 'delete') {
+        const name = btn.dataset.name || 'этого менеджера';
+        if (!window.confirm(`Удалить менеджера «${name}»? Доступ будет закрыт, активные сессии отозваны. История клиентов, звонков и задач сохранится.`)) return;
+      }
+      try {
+        if (act === 'revoke') await api(`/api/users/${id}/revoke-sessions`, { method: 'POST', body: '{}' });
+        else if (act === 'delete') await api(`/api/users/${id}`, { method: 'DELETE' });
+        else if (act === 'reset') {
+          const result = await api(`/api/users/${id}/reset-password`, { method: 'POST', body: '{}' });
+          window.alert(`Временный пароль для ${manager?.full_name || 'менеджера'}:\\n\\n${result.temporary_password}\\n\\nСкопируйте его сейчас. Повторно посмотреть пароль будет невозможно.`);
+        } else await api(`/api/users/${id}/${act}`, { method: 'POST', body: '{}' });
+        await route();
+      } catch (err) {
+        window.alert(err.message || 'Не удалось выполнить действие');
+      }
     });
   }
 
