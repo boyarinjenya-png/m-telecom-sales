@@ -252,6 +252,25 @@ final class App
         $r->post('/api/clients/{id}/calls', fn (Request $req, array $user) => [
             'call' => $this->interactions->recordCall((int) $req->param('id'), $req->body, $user, $req),
         ]);
+        $r->get('/api/analytics/unverified-calls', function (Request $req, array $user) {
+            $this->access->requireAdmin($user);
+            [$from, $to] = $this->analytics->period($req->query);
+            $items = $this->db->fetchAll(
+                "SELECT cl.id, cl.client_id, cl.user_id, cl.phone, cl.direction,
+                        cl.started_at, cl.duration_sec, cl.talk_duration_sec,
+                        cl.connected, cl.result, cl.source, cl.data_source,
+                        c.full_name, c.company_name, u.full_name AS manager_name
+                 FROM calls cl
+                 INNER JOIN clients c ON c.id = cl.client_id
+                 LEFT JOIN users u ON u.id = cl.user_id
+                 WHERE cl.data_source = 'unverified'
+                   AND cl.started_at >= :from AND cl.started_at <= :to
+                 ORDER BY cl.started_at DESC
+                 LIMIT 500",
+                ['from' => $from, 'to' => $to]
+            );
+            return ['items' => $items, 'total' => count($items), 'period' => ['from' => $from, 'to' => $to]];
+        }, true, ['admin']);
         $r->patch('/api/calls/{id}', fn (Request $req, array $user) => [
             'call' => $this->interactions->completeCall((int) $req->param('id'), $req->body, $user, $req),
         ]);
