@@ -274,6 +274,7 @@
       <p id="c_err" class="form-error" hidden></p>
       <div id="person-fields">
         <label>ФИО<input id="c_full_name" required></label>
+        <label>ИИН<input id="c_iin" inputmode="numeric" maxlength="12" pattern="[0-9]{12}" placeholder="12 цифр (необязательно)"></label>
         <div class="grid-2">
           <label>Основной телефон<input id="c_phone_primary" type="tel" required></label>
           <label>Дополнительный телефон<input id="c_phone_secondary" type="tel"></label>
@@ -380,6 +381,7 @@
           body = {
             type: 'person',
             full_name: fullName,
+            iin: ($('c_iin').value || '').replace(/\\D/g, '') || null,
             phone_primary: phone,
             phone_secondary: ($('c_phone_secondary').value || '').trim() || null,
             address: ($('c_address').value || '').trim() || null,
@@ -555,6 +557,7 @@
       if (tab === 'info') {
         return infoHtml + `<div class="client-form"><h4>Изменить данные</h4>
           ${person ? `<label>ФИО<input id="e_full_name" value="${esc(c.full_name || '')}"></label>
+            <label>ИИН<input id="e_iin" inputmode="numeric" maxlength="12" value="${esc(c.iin || '')}" placeholder="12 цифр (необязательно)"></label>
             <label>Адрес<input id="e_address" value="${esc(c.address || '')}"></label>
             <label>Потребность<input id="e_need" value="${esc(c.need || '')}"></label>`
             : `<label>Компания<input id="e_company_name" value="${esc(c.company_name || '')}"></label>
@@ -889,7 +892,7 @@
             current_provider: $('e_current_provider').value, comment: $('e_comment').value
           };
           if (person) {
-            body.full_name = $('e_full_name').value; body.address = $('e_address').value; body.need = $('e_need').value;
+            body.full_name = $('e_full_name').value; body.iin = $('e_iin').value.replace(/\\D/g, '') || null; body.address = $('e_address').value; body.need = $('e_need').value;
           } else {
             body.company_name = $('e_company_name').value; body.bin = $('e_bin').value;
             body.legal_address = $('e_legal_address').value; body.actual_address = $('e_actual_address').value;
