@@ -709,11 +709,11 @@
         </div>
       </div>
       <div id="cform"></div>
-      <div class="client-section-picker">
-        <label for="client-section-select">Разделы клиента</label>
-        <select id="client-section-select">
-          ${tabs.map(([k, l]) => `<option value="${k}" ${k === savedTab ? 'selected' : ''}>${esc(l)}</option>`).join('')}
-        </select>
+      <div class="more-wrap client-sections-wrap">
+        <button type="button" class="btn secondary" id="client-sections-toggle">Разделы клиента: ${esc((tabs.find(([k]) => k === savedTab) || tabs[0])[1])} ▾</button>
+        <div id="client-sections-menu" class="more-menu" hidden>
+          ${tabs.map(([k, l]) => `<button type="button" data-client-section="${k}">${esc(l)}</button>`).join('')}
+        </div>
       </div>
       <div id="csec">${sectionHtml(savedTab)}</div>`;
 
@@ -888,11 +888,19 @@
     openHtml('Карточка клиента', html, () => {
       const drawTab = (tab) => {
         state.clientTab = tab;
-        $('client-section-select').value = tab;
+        const label = (tabs.find(([key]) => key === tab) || tabs[0])[1];
+        $('client-sections-toggle').textContent = 'Разделы клиента: ' + label + ' ▾';
+        $('client-sections-menu').hidden = true;
         $('csec').innerHTML = sectionHtml(tab);
         bindSection();
       };
-      if ($('client-section-select')) $('client-section-select').onchange = (e) => drawTab(e.target.value);
+      if ($('client-sections-toggle')) $('client-sections-toggle').onclick = (e) => {
+        e.stopPropagation();
+        $('client-sections-menu').hidden = !$('client-sections-menu').hidden;
+      };
+      document.querySelectorAll('[data-client-section]').forEach((b) => {
+        b.onclick = () => drawTab(b.dataset.clientSection);
+      });
       document.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => {
         if ($('more-menu')) $('more-menu').hidden = true;
         showForm(b.dataset.act);
