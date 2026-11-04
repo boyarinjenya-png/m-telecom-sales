@@ -23,7 +23,7 @@ final class UserService
     public function list(array $actor): array
     {
         $this->access->requireAdmin($actor);
-        $rows = $this->db->fetchAll('SELECT * FROM users ORDER BY role, full_name');
+        // Soft-deleted accounts are retained for historical references but hidden from active user pickers.\n        $rows = $this->db->fetchAll(\"SELECT * FROM users WHERE status <> 'deleted' ORDER BY role, full_name\");
         return array_map([$this->auth, 'publicUser'], $rows);
     }
 
@@ -119,6 +119,38 @@ final class UserService
         $this->audit->log((int) $actor['id'], $blocked ? 'user.block' : 'user.unblock', 'user', $id, $request);
         $row = $this->db->fetch('SELECT * FROM users WHERE id = :id', ['id' => $id]);
         return $this->auth->publicUser($row ?? []);
+    }
+
+    /**
+     * Soft-delete a manager without destroying historical client, task, call or audit references.
+     * The account is immediately disabled and all active sessions are revoked.
+     */
+    public function deleteManager(int $id, array $actor, Request $request): array
+    {
+        $this->access->requireAdmin($actor);
+        $user = $this->db->fetch('SELECT * FROM users WHERE id = :id', ['id' => $id]);
+        if (!$user) {
+            throw HttpException::notFound('Менеджер не найден');
+        }
+        if ($user['role'] !== Catalog::ROLE_MANAGER) {
+            throw HttpException::forbidden('Удалять можно только учётные записи менеджеров');
+        }
+        if ((int) $user['id'] === (int) $actor['id']) {
+            throw HttpException::forbidden('Нельзя удалить собственную учётную запись');
+        }
+        if (($user['status'] ?? '') !== 'deleted') {
+            $this->db->transaction(function () use ($id, $actor, $request): void {
+                $this->db->update('users', [
+                    'status' => 'deleted',
+                    'updated_at' => $this->db->now(),
+                ], ['id' => $id]);
+                $this->auth->revokeAllSessions($id, $request, (int) $actor['id']);
+                $this->audit->log((int) $actor['id'], 'user.delete', 'user', $id, $request, [
+                    'mode' => 'soft_delete',
+                ]);
+            });
+        }
+        return ['deleted' => true, 'id' => $id];
     }
 
     public function createAdmin(string $login, string $password, string $fullName): int
