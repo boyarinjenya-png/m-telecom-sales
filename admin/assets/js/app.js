@@ -446,13 +446,13 @@
           btn.disabled = false;
           const dups = err.payload && err.payload.duplicates;
           if (Array.isArray(dups) && dups.length) {
-            const reason = { phone: 'телефону', bin: 'БИН', company_name: 'названию компании' };
+            const reason = { iin: 'ИИН', bin: 'БИН' };
             $('c_dup').hidden = false;
-            $('c_dup').innerHTML = 'Найдены совпадения, запись не создана:<ul>' + dups.map((d) => {
+            $('c_dup').innerHTML = 'Найдена запись с таким же идентификатором — ИИН/БИН. Создание заблокировано:<ul>' + dups.map((d) => {
               const who = esc(d.company_name || d.full_name || ('#' + d.id));
               const why = reason[d.match_reason] || d.match_reason;
               return `<li>по ${esc(why)}${d.match_value ? ' ' + esc(d.match_value) : ''} — ${who}</li>`;
-            }).join('') + '</ul>Измените телефон или БИН. Автоматическое объединение не выполняется.';
+            }).join('') + '</ul>Телефон может повторяться у разных клиентов. Для создания проверьте ИИН или БИН.';
             $('c_err').hidden = true;
             return;
           }
