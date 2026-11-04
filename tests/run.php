@@ -112,6 +112,7 @@ assert_true($usersAsMgr['status'] === 403, 'manager cannot list users');
 $c1 = req($app, 'POST', '/api/clients', [
     'type' => 'person',
     'full_name' => 'Иван Петров',
+    'iin' => '001122334455',
     'phone_primary' => '+7 701 111 22 33',
     'address' => 'Алматы, ул. Абая 1',
     'lat' => 43.238949,
@@ -121,14 +122,38 @@ $c1 = req($app, 'POST', '/api/clients', [
     'idempotency_key' => 'client-ivan-1',
 ], $t1);
 assert_true($c1['status'] === 200 && !empty($c1['json']['client']['id']), 'manager creates person');
+assert_true(($c1['json']['client']['iin'] ?? '') === '001122334455', 'person IIN is saved and returned');
 $clientId = (int) ($c1['json']['client']['id'] ?? 0);
 
-$c1dupReq = req($app, 'POST', '/api/clients', [
+$badIin = req($app, 'POST', '/api/clients', [
+    'type' => 'person', 'full_name' => 'Тест ИИН', 'phone_primary' => '77019998877',
+    'iin' => '12345', 'force' => true, 'idempotency_key' => 'bad-iin-test',
+], $t1);
+assert_true(($badIin['status'] ?? 0) === 400, 'invalid IIN length is rejected');
+
+$sharedPhone = req($app, 'POST', '/api/clients', [
     'type' => 'person',
     'full_name' => 'Иван П.',
     'phone_primary' => '87011112233',
+    'idempotency_key' => 'shared-phone-person',
 ], $t1);
-assert_true($c1dupReq['status'] === 409 && !empty($c1dupReq['json']['duplicates']), 'duplicate phone warning');
+assert_true(
+    $sharedPhone['status'] === 200 && empty($sharedPhone['json']['duplicates']),
+    'shared phone is allowed for another person'
+);
+$iinDup = req($app, 'POST', '/api/clients', [
+    'type' => 'person',
+    'full_name' => 'Тот же ИИН',
+    'phone_primary' => '77015556677',
+    'iin' => '001122334455',
+    'idempotency_key' => 'duplicate-iin-warning',
+], $t1);
+assert_true(
+    $iinDup['status'] === 409
+    && !empty($iinDup['json']['duplicates'])
+    && ($iinDup['json']['duplicates'][0]['match_reason'] ?? '') === 'iin',
+    'duplicate IIN warning'
+);
 
 $c1again = req($app, 'POST', '/api/clients', [
     'type' => 'person',
@@ -141,11 +166,12 @@ assert_true(($c1again['json']['client']['id'] ?? 0) == $clientId, 'idempotent cl
 $forced = req($app, 'POST', '/api/clients', [
     'type' => 'person',
     'full_name' => 'Иван Другой',
-    'phone_primary' => '87011112233',
+    'phone_primary' => '87012223344',
+    'iin' => '001122334455',
     'force' => true,
     'idempotency_key' => 'client-ivan-forced',
 ], $t1);
-assert_true($forced['status'] === 200, 'force create after duplicate warning');
+assert_true($forced['status'] === 200, 'force create after IIN duplicate warning');
 
 $company = req($app, 'POST', '/api/clients', [
     'type' => 'company',
@@ -163,7 +189,52 @@ $company = req($app, 'POST', '/api/clients', [
 assert_true($company['status'] === 200 && count($company['json']['client']['objects'] ?? []) === 1, 'create company with object and contact');
 
 $binDup = req($app, 'POST', '/api/clients/check-duplicates', ['bin' => '123456789012', 'company_name' => 'Ромашка'], $t1);
-assert_true(!empty($binDup['json']['duplicates']), 'BIN duplicate check');
+assert_true(
+    !empty($binDup['json']['duplicates']) && ($binDup['json']['duplicates'][0]['match_reason'] ?? '') === 'bin',
+    'BIN duplicate check'
+);
+$binTyped = req($app, 'POST', '/api/clients/check-duplicates', [
+    'type' => 'company',
+    'bin' => '123456789012',
+], $t1);
+assert_true(
+    !empty($binTyped['json']['duplicates']) && ($binTyped['json']['duplicates'][0]['match_reason'] ?? '') === 'bin',
+    'BIN duplicate check uses company type'
+);
+$personIgnoresBin = req($app, 'POST', '/api/clients/check-duplicates', [
+    'type' => 'person',
+    'bin' => '123456789012',
+    'phone_primary' => '77273334455',
+], $t1);
+assert_true(empty($personIgnoresBin['json']['duplicates']), 'person duplicate check ignores BIN and shared phone');
+$companyIgnoresPhone = req($app, 'POST', '/api/clients/check-duplicates', [
+    'type' => 'company',
+    'company_name' => 'Другая компания',
+    'phone_primary' => '+7 701 111 22 33',
+], $t1);
+assert_true(empty($companyIgnoresPhone['json']['duplicates']), 'company duplicate check ignores a shared phone');
+$sharedWithCompany = req($app, 'POST', '/api/clients', [
+    'type' => 'person',
+    'full_name' => 'Сосед компании',
+    'phone_primary' => '77273334455',
+    'idempotency_key' => 'person-shares-company-phone',
+], $t1);
+assert_true($sharedWithCompany['status'] === 200, 'person and company may share a phone');
+$iinEdit = req($app, 'PUT', '/api/clients/' . $clientId, ['iin' => '8801 0130 0123'], $t1);
+assert_true(
+    ($iinEdit['status'] ?? 0) === 200 && ($iinEdit['json']['client']['iin'] ?? '') === '880101300123',
+    'edited IIN is normalized and saved'
+);
+$iinSearch = req($app, 'GET', '/api/clients', [], $t1, ['q' => '880101300123']);
+$iinFound = false;
+foreach ($iinSearch['json']['items'] ?? [] as $item) {
+    if ((int) ($item['id'] ?? 0) === $clientId) {
+        $iinFound = true;
+    }
+}
+assert_true(($iinSearch['status'] ?? 0) === 200 && $iinFound, 'client search finds IIN');
+$badIinEdit = req($app, 'PUT', '/api/clients/' . $clientId, ['iin' => '12345'], $t1);
+assert_true(($badIinEdit['status'] ?? 0) === 400, 'edited IIN must be 12 digits');
 
 $foreign = req($app, 'GET', '/api/clients/' . $clientId, [], $t2);
 assert_true($foreign['status'] === 403, 'manager cannot read foreign client');
@@ -914,6 +985,90 @@ $missingKey = req($app, 'POST', '/api/clients/' . $offId . '/application', [
     'comment' => 'без ключа',
 ], $mgrTok);
 assert_true(($missingKey['status'] ?? 0) >= 400, 'createApplication without idempotency_key rejected');
+
+// --- manager account editing and secure one-time password reset ---
+$manager2Id = (int) ($mgr2['json']['user']['id'] ?? 0);
+$managerUpdate = req($app, 'PATCH', '/api/users/' . $manager2Id, [
+    'login' => 'andrey.manager',
+    'full_name' => 'Андрей Менеджер',
+    'phone' => '77075553322',
+], $adminToken);
+assert_true(
+    ($managerUpdate['status'] ?? 0) === 200
+    && ($managerUpdate['json']['user']['login'] ?? '') === 'andrey.manager'
+    && ($managerUpdate['json']['user']['full_name'] ?? '') === 'Андрей Менеджер',
+    'admin can edit manager login, full name and phone'
+);
+$duplicateLogin = req($app, 'PATCH', '/api/users/' . (int) ($mgr1['json']['user']['id'] ?? 0), [
+    'login' => 'andrey.manager',
+], $adminToken);
+assert_true(($duplicateLogin['status'] ?? 0) === 409, 'manager login must be unique');
+$managerReset = req($app, 'POST', '/api/users/' . $manager2Id . '/reset-password', [], $adminToken);
+$tempPassword = (string) ($managerReset['json']['temporary_password'] ?? '');
+assert_true(
+    ($managerReset['status'] ?? 0) === 200
+    && strlen($tempPassword) >= 20
+    && !empty($managerReset['json']['sessions_revoked']),
+    'admin can generate one-time temporary manager password and revoke sessions'
+);
+$managerOldPassword = req($app, 'POST', '/api/auth/login', [
+    'login' => 'andrey.manager',
+    'password' => 'Manager#2',
+]);
+assert_true(($managerOldPassword['status'] ?? 0) === 401, 'old manager password rejected after reset');
+$managerTempLogin = req($app, 'POST', '/api/auth/login', [
+    'login' => 'andrey.manager',
+    'password' => $tempPassword,
+]);
+assert_true(($managerTempLogin['status'] ?? 0) === 200, 'temporary manager password works once issued');
+$t2 = $managerTempLogin['json']['token'] ?? '';
+$listedManagers = req($app, 'GET', '/api/users', [], $adminToken);
+$editedListed = array_values(array_filter(
+    $listedManagers['json']['users'] ?? [],
+    static fn ($u) => ($u['login'] ?? '') === 'andrey.manager'
+));
+assert_true(
+    ($listedManagers['status'] ?? 0) === 200
+    && count($editedListed) === 1
+    && ($editedListed[0]['full_name'] ?? '') === 'Андрей Менеджер'
+    && ($editedListed[0]['phone'] ?? '') === '77075553322'
+    && ($editedListed[0]['status'] ?? '') === 'active',
+    'active manager list shows the edited account'
+);
+
+// --- manager soft-delete: revoke access, preserve history, hide from active lists ---
+$manager2Id = (int) ($mgr2['json']['user']['id'] ?? 0);
+$managerDelete = req($app, 'DELETE', '/api/users/' . $manager2Id, [], $adminToken);
+assert_true(($managerDelete['status'] ?? 0) === 200 && !empty($managerDelete['json']['deleted']), 'admin soft-deletes manager');
+$managerDeletedRow = $app->db->fetch('SELECT id, status FROM users WHERE id = :id', ['id' => $manager2Id]);
+assert_true($managerDeletedRow && $managerDeletedRow['status'] === 'deleted', 'deleted manager row retained for history');
+$managerOldSession = req($app, 'GET', '/api/auth/me', [], $t2);
+assert_true(($managerOldSession['status'] ?? 0) === 401, 'deleted manager existing token revoked');
+$managerRelogin = req($app, 'POST', '/api/auth/login', [
+    'login' => 'andrey.manager',
+    'password' => $tempPassword,
+]);
+assert_true(($managerRelogin['status'] ?? 0) === 403, 'deleted manager cannot log in');
+$previousLogin = req($app, 'POST', '/api/auth/login', ['login' => 'manager2', 'password' => 'Manager#2']);
+assert_true(($previousLogin['status'] ?? 0) === 401, 'previous manager login is not accepted');
+$activeUsers = req($app, 'GET', '/api/users', [], $adminToken);
+$deletedVisible = array_filter($activeUsers['json']['users'] ?? [], static fn ($u) => (int) ($u['id'] ?? 0) === $manager2Id);
+$deletedStatusShown = array_filter($activeUsers['json']['users'] ?? [], static fn ($u) => ($u['status'] ?? '') === 'deleted');
+$manager4Visible = array_filter(
+    $activeUsers['json']['users'] ?? [],
+    static fn ($u) => (int) ($u['id'] ?? 0) === (int) ($mgr4['json']['user']['id'] ?? 0)
+);
+assert_true(
+    ($activeUsers['status'] ?? 0) === 200
+    && count($deletedVisible) === 0
+    && count($deletedStatusShown) === 0
+    && count($manager4Visible) === 1,
+    'deleted manager hidden from active user list'
+);
+$keptClient = req($app, 'GET', '/api/clients/' . (int) $retryId1, [], $adminToken);
+assert_true(($keptClient['status'] ?? 0) === 200, 'deleted manager client history remains');
+$managerCannotDelete = req($app, 'DELETE', '/api/users/' . (int) ($mgr1['json']['user']['id'] ?? 0), [], $t4);
+assert_true(($managerCannotDelete['status'] ?? 0) === 403, 'manager cannot delete another manager');
 
 echo "\nPassed: {$passed}; Failed: {$failed}\n";
 exit($failed === 0 ? 0 : 1);

@@ -23,7 +23,10 @@ final class UserService
     public function list(array $actor): array
     {
         $this->access->requireAdmin($actor);
-        $rows = $this->db->fetchAll('SELECT * FROM users ORDER BY role, full_name');
+        // Soft-deleted accounts stay in the database for history and are hidden from active lists.
+        $rows = $this->db->fetchAll(
+            "SELECT * FROM users WHERE status <> 'deleted' ORDER BY role, full_name"
+        );
         return array_map([$this->auth, 'publicUser'], $rows);
     }
 
@@ -77,23 +80,75 @@ final class UserService
         if (!$user) {
             throw HttpException::notFound('Пользователь не найден');
         }
+        if (($user['role'] ?? '') !== Catalog::ROLE_MANAGER || ($user['status'] ?? '') === 'deleted') {
+            throw HttpException::forbidden('Можно изменять только активные учётные записи менеджеров');
+        }
         $data = ['updated_at' => $this->db->now()];
-        if (isset($input['full_name'])) {
-            $data['full_name'] = trim((string) $input['full_name']);
+        if (array_key_exists('login', $input)) {
+            $login = trim((string) $input['login']);
+            if ($login === '' || strlen($login) > 100) {
+                throw new HttpException('Логин обязателен и должен быть не длиннее 100 символов');
+            }
+            $duplicate = $this->db->fetch(
+                'SELECT id FROM users WHERE login = :login AND id <> :id',
+                ['login' => $login, 'id' => $id]
+            );
+            if ($duplicate) {
+                throw new HttpException('Логин уже занят', 409);
+            }
+            $data['login'] = $login;
+        }
+        if (array_key_exists('full_name', $input)) {
+            $fullName = trim((string) $input['full_name']);
+            if ($fullName === '') {
+                throw new HttpException('ФИО не может быть пустым');
+            }
+            $data['full_name'] = $fullName;
         }
         if (array_key_exists('phone', $input)) {
-            $data['phone'] = $input['phone'];
+            $data['phone'] = trim((string) $input['phone']) ?: null;
         }
-        if (!empty($input['password'])) {
+        $passwordChanged = !empty($input['password']);
+        if ($passwordChanged) {
             if (strlen((string) $input['password']) < 8) {
                 throw new HttpException('Пароль должен быть не короче 8 символов');
             }
             $data['password_hash'] = password_hash((string) $input['password'], PASSWORD_DEFAULT);
         }
         $this->db->update('users', $data, ['id' => $id]);
+        if ($passwordChanged) {
+            $this->auth->revokeAllSessions($id, $request, (int) $actor['id']);
+        }
         $this->audit->log((int) $actor['id'], 'user.update', 'user', $id, $request);
         $row = $this->db->fetch('SELECT * FROM users WHERE id = :id', ['id' => $id]);
         return $this->auth->publicUser($row ?? []);
+    }
+
+    /**
+     * Generate a one-time temporary password. The plaintext is returned only in this response.
+     */
+    public function resetManagerPassword(int $id, array $actor, Request $request): array
+    {
+        $this->access->requireAdmin($actor);
+        $user = $this->db->fetch('SELECT * FROM users WHERE id = :id', ['id' => $id]);
+        if (!$user) {
+            throw HttpException::notFound('Менеджер не найден');
+        }
+        if (($user['role'] ?? '') !== Catalog::ROLE_MANAGER || ($user['status'] ?? '') === 'deleted') {
+            throw HttpException::forbidden('Сбросить пароль можно только действующему менеджеру');
+        }
+        $temporaryPassword = rtrim(strtr(base64_encode(random_bytes(18)), '+/', '-_'), '=');
+        $this->db->transaction(function () use ($id, $temporaryPassword, $actor, $request): void {
+            $this->db->update('users', [
+                'password_hash' => password_hash($temporaryPassword, PASSWORD_DEFAULT),
+                'updated_at' => $this->db->now(),
+            ], ['id' => $id]);
+            $this->auth->revokeAllSessions($id, $request, (int) $actor['id']);
+            $this->audit->log((int) $actor['id'], 'user.password_reset', 'user', $id, $request, [
+                'sessions_revoked' => true,
+            ]);
+        });
+        return ['temporary_password' => $temporaryPassword, 'sessions_revoked' => true];
     }
 
     public function setBlocked(int $id, bool $blocked, array $actor, Request $request): array
@@ -119,6 +174,38 @@ final class UserService
         $this->audit->log((int) $actor['id'], $blocked ? 'user.block' : 'user.unblock', 'user', $id, $request);
         $row = $this->db->fetch('SELECT * FROM users WHERE id = :id', ['id' => $id]);
         return $this->auth->publicUser($row ?? []);
+    }
+
+    /**
+     * Soft-delete a manager without destroying historical client, task, call or audit references.
+     * The account is immediately disabled and all active sessions are revoked.
+     */
+    public function deleteManager(int $id, array $actor, Request $request): array
+    {
+        $this->access->requireAdmin($actor);
+        $user = $this->db->fetch('SELECT * FROM users WHERE id = :id', ['id' => $id]);
+        if (!$user) {
+            throw HttpException::notFound('Менеджер не найден');
+        }
+        if ($user['role'] !== Catalog::ROLE_MANAGER) {
+            throw HttpException::forbidden('Удалять можно только учётные записи менеджеров');
+        }
+        if ((int) $user['id'] === (int) $actor['id']) {
+            throw HttpException::forbidden('Нельзя удалить собственную учётную запись');
+        }
+        if (($user['status'] ?? '') !== 'deleted') {
+            $this->db->transaction(function () use ($id, $actor, $request): void {
+                $this->db->update('users', [
+                    'status' => 'deleted',
+                    'updated_at' => $this->db->now(),
+                ], ['id' => $id]);
+                $this->auth->revokeAllSessions($id, $request, (int) $actor['id']);
+                $this->audit->log((int) $actor['id'], 'user.delete', 'user', $id, $request, [
+                    'mode' => 'soft_delete',
+                ]);
+            });
+        }
+        return ['deleted' => true, 'id' => $id];
     }
 
     public function createAdmin(string $login, string $password, string $fullName): int

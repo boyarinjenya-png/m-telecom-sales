@@ -27,12 +27,13 @@ final class ClientService
         $where = [$this->access->managerFilterSql($user, 'c')];
         $params = [];
         if (!empty($filters['q'])) {
-            $where[] = '(c.full_name LIKE :q OR c.company_name LIKE :q2 OR c.phone_primary LIKE :q3 OR c.bin LIKE :q4)';
+            $where[] = '(c.full_name LIKE :q OR c.company_name LIKE :q2 OR c.phone_primary LIKE :q3 OR c.bin LIKE :q4 OR c.iin LIKE :q5)';
             $like = '%' . $filters['q'] . '%';
             $params['q'] = $like;
             $params['q2'] = $like;
             $params['q3'] = $like;
             $params['q4'] = $like;
+            $params['q5'] = $like;
         }
         if (!empty($filters['type'])) {
             $where[] = 'c.type = :type';
@@ -45,6 +46,13 @@ final class ClientService
         if (!empty($filters['manager_id']) && $this->access->isAdmin($user)) {
             $where[] = 'c.manager_id = :mid';
             $params['mid'] = (int) $filters['manager_id'];
+        }
+        if (!empty($filters['application_event'])) {
+            $where[] = "EXISTS (
+                SELECT 1 FROM interactions ai
+                WHERE ai.client_id = c.id
+                  AND ai.result = 'application_received'
+            )";
         }
         if (!empty($filters['status_event']) && !empty($filters['from']) && !empty($filters['to'])) {
             $where[] = 'EXISTS (
@@ -157,6 +165,7 @@ final class ClientService
                 'type' => $type,
                 'status' => $input['status'] ?? 'new',
                 'full_name' => $input['full_name'] ?? null,
+                'iin' => $type === Catalog::TYPE_PERSON ? (preg_replace('/\\D+/', '', (string) ($input['iin'] ?? '')) ?: null) : null,
                 'phone_primary' => $input['phone_primary'] ?? null,
                 'phone_primary_norm' => Catalog::normalizePhone($input['phone_primary'] ?? null),
                 'phone_secondary' => $input['phone_secondary'] ?? null,
@@ -229,7 +238,7 @@ final class ClientService
 
         $now = $this->db->now();
         $fields = [
-            'full_name', 'phone_primary', 'phone_secondary', 'address', 'lat', 'lng',
+            'full_name', 'iin', 'phone_primary', 'phone_secondary', 'address', 'lat', 'lng',
             'current_provider', 'need', 'comment', 'company_name', 'legal_address',
             'actual_address', 'potential_connections', 'company_needs', 'next_contact_at',
         ];
@@ -247,6 +256,10 @@ final class ClientService
         }
         if (array_key_exists('bin', $input)) {
             $data['bin'] = Catalog::normalizeBin($input['bin']);
+        }
+        if ($type === Catalog::TYPE_PERSON && array_key_exists('iin', $data)) {
+            $digits = preg_replace('/\D+/', '', (string) ($data['iin'] ?? '')) ?? '';
+            $data['iin'] = $digits !== '' ? $digits : null;
         }
         if (array_key_exists('manager_id', $input) && $this->access->isAdmin($user)) {
             $data['manager_id'] = $input['manager_id'];
@@ -469,6 +482,12 @@ final class ClientService
                 throw new HttpException('Укажите название компании');
             }
         }
+        if ($type === Catalog::TYPE_PERSON && !empty($input['iin'])) {
+            $iin = preg_replace('/\\D+/', '', (string) $input['iin']);
+            if ($iin === null || strlen($iin) !== 12) {
+                throw new HttpException('ИИН должен содержать 12 цифр');
+            }
+        }
         if (!empty($input['bin'])) {
             $bin = Catalog::normalizeBin($input['bin']);
             if ($bin && strlen($bin) !== 12) {
@@ -640,21 +659,24 @@ final class ClientService
              ORDER BY sh.created_at DESC, sh.id DESC',
             $p
         );
-        $applications = [];
         $connections = [];
         foreach ($history as &$ev) {
             $ev['from_label'] = $ev['from_status'] ? (Catalog::STATUSES[$ev['from_status']] ?? $ev['from_status']) : null;
             $ev['to_label'] = Catalog::STATUSES[$ev['to_status']] ?? $ev['to_status'];
-            if (($ev['to_status'] ?? '') === 'application_received') {
-                $applications[] = $ev;
-            }
             if (in_array($ev['to_status'] ?? '', ['connecting', 'connected'], true)) {
                 $connections[] = $ev;
             }
         }
         unset($ev);
         $client['status_history'] = $history;
-        $client['applications'] = $applications;
+        $client['applications'] = array_values(array_filter(
+            $client['timeline'] ?? [],
+            static function (array $item): bool {
+                $payload = $item['payload'] ?? [];
+                return ($item['result'] ?? '') === 'application_received'
+                    || (($payload['kind'] ?? '') === 'application');
+            }
+        ));
         $client['connections'] = $connections;
     }
 

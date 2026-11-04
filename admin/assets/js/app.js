@@ -174,6 +174,55 @@
     }
   }
 
+  async function showUnverifiedSimCalls(host) {
+    let panel = host.querySelector('#unverified-sim-details');
+    if (panel) { panel.remove(); return; }
+    panel = document.createElement('div');
+    panel.id = 'unverified-sim-details';
+    panel.className = 'card';
+    panel.innerHTML = '<h3>Неподтверждённые SIM-звонки</h3><p class="muted">Загрузка списка…</p>';
+    host.appendChild(panel);
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    try {
+      const data = await api('/api/analytics/unverified-calls?' + aqs());
+      const items = data.items || [];
+      panel.innerHTML = '<h3>Неподтверждённые SIM-звонки</h3>' +
+        '<p class="muted">Период: ' + esc(data.period?.from || '') + ' — ' + esc(data.period?.to || '') +
+        '. Записей: ' + items.length + (data.total >= 500 ? ' (показаны первые 500)' : '') + '</p>' +
+        (items.length ? table(
+          ['Дата', 'Менеджер', 'Клиент', 'Телефон', 'Результат', 'Длительность', 'Источник'],
+          items.map((call) => `<tr>
+            <td>${esc(call.started_at || '')}</td>
+            <td>${esc(call.manager_name || '—')}</td>
+            <td>${esc(call.company_name || call.full_name || ('Клиент #' + call.client_id))}</td>
+            <td>${esc(call.phone || '—')}</td>
+            <td>${esc(call.result || 'не указан')}</td>
+            <td>${esc(call.talk_duration_sec ?? call.duration_sec ?? 0)} сек.</td>
+            <td>${esc(call.data_source || call.source || 'unverified')}</td>
+          </tr>`)
+        ) : '<p>За выбранный период неподтверждённых SIM-звонков нет.</p>') +
+        '<button type="button" class="btn secondary" id="close-unverified-sim">Скрыть список</button>';
+      const close = panel.querySelector('#close-unverified-sim');
+      if (close) close.onclick = () => panel.remove();
+    } catch (err) {
+      panel.innerHTML = '<h3>Неподтверждённые SIM-звонки</h3><p class="form-error">' + esc(err.message || 'Не удалось загрузить звонки') + '</p>';
+    }
+  }
+
+  function enableUnverifiedSimDetails(host) {
+    const label = [...host.querySelectorAll('.kpi .l')].find((el) => el.textContent.trim() === 'Неподтверждённые SIM');
+    if (!label) return;
+    const tile = label.closest('.kpi');
+    tile.classList.add('clickable');
+    tile.setAttribute('role', 'button');
+    tile.setAttribute('tabindex', '0');
+    tile.title = 'Нажмите, чтобы посмотреть список звонков';
+    tile.addEventListener('click', () => showUnverifiedSimCalls(host));
+    tile.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showUnverifiedSimCalls(host); }
+    });
+  }
+
   async function pageOverview(root) {
     const d = (await api('/api/analytics/overview?' + qs())).overview;
     const cmp = (await api('/api/analytics/managers?' + qs())).managers;
@@ -198,6 +247,7 @@
     }) + `<div class="card"><h3>Сравнение менеджеров за период</h3>
       <p class="muted">«В работе» и «Просрочено» — текущий снимок. Остальные колонки — события периода.</p>
       ${renderManagerTable(cmp)}</div>`;
+    enableUnverifiedSimDetails(root);
   }
 
   function renderManagerTable(rows) {
@@ -213,15 +263,20 @@
   }
 
   async function pageManagers(root) {
-    const users = (await api('/api/users')).users.filter((u) => u.role === 'manager');
-    const cmp = (await api('/api/analytics/managers?' + qs())).managers;
+    const users = (await api('/api/users')).users.filter((u) => u.role === 'manager' && u.status !== 'deleted');
+    const visibleIds = new Set(users.map((u) => Number(u.id)));
+    const cmp = (await api('/api/analytics/managers?' + qs())).managers.filter((u) => visibleIds.has(Number(u.id)));
     root.innerHTML = `<div class="toolbar"><button id="add-manager">Добавить менеджера</button></div>
-      <div class="card">${table(['ФИО', 'Логин', 'Телефон', 'Статус', ''], users.map((u) => `<tr>
+      <div class="card">${table(['ФИО', 'Логин', 'Телефон', 'Статус', 'Последний вход', 'Управление'], users.map((u) => `<tr>
         <td>${esc(u.full_name)}</td><td>${esc(u.login)}</td><td>${esc(u.phone || '')}</td>
         <td>${u.status === 'blocked' ? '<span class="badge danger">Заблокирован</span>' : '<span class="badge ok">Активен</span>'}</td>
+        <td>${esc(u.last_login_at || 'Ещё не входил')}</td>
         <td>
+          <button class="btn secondary" data-act="edit" data-id="${u.id}">Учётная запись</button>
+          <button class="btn secondary" data-act="reset" data-id="${u.id}" data-name="${esc(u.full_name)}">Сбросить пароль</button>
           <button class="btn secondary" data-act="${u.status === 'blocked' ? 'unblock' : 'block'}" data-id="${u.id}">${u.status === 'blocked' ? 'Разблокировать' : 'Заблокировать'}</button>
           <button class="btn secondary" data-act="revoke" data-id="${u.id}">Отозвать сессии</button>
+          <button class="btn danger" data-act="delete" data-id="${u.id}" data-name="${esc(u.full_name)}">Удалить</button>
         </td></tr>`))}</div>
       <div class="card"><h3>Эффективность</h3>${renderManagerTable(cmp)}</div>`;
     $('add-manager').onclick = () => openForm('Новый менеджер', [
@@ -232,9 +287,47 @@
     });
     root.querySelectorAll('[data-act]').forEach((btn) => btn.onclick = async () => {
       const id = btn.dataset.id, act = btn.dataset.act;
-      if (act === 'revoke') await api(`/api/users/${id}/revoke-sessions`, { method: 'POST', body: '{}' });
-      else await api(`/api/users/${id}/${act}`, { method: 'POST', body: '{}' });
-      route();
+      const manager = users.find((u) => Number(u.id) === Number(id));
+      if (act === 'edit') {
+        openHtml('Учётная запись менеджера', `<h3>Учётная запись менеджера</h3>
+          <label>ФИО<input id="manager-full-name" value="${esc(manager?.full_name || '')}" required></label>
+          <label>Логин<input id="manager-login" value="${esc(manager?.login || '')}" required></label>
+          <label>Телефон<input id="manager-phone" value="${esc(manager?.phone || '')}"></label>
+          <p class="muted">Пароль здесь не отображается. Для смены используйте отдельную кнопку сброса пароля.</p>
+          <button id="manager-save">Сохранить изменения</button>`, () => {
+            $('manager-save').onclick = async () => {
+              try {
+                await api(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify({
+                  full_name: $('manager-full-name').value.trim(),
+                  login: $('manager-login').value.trim(),
+                  phone: $('manager-phone').value.trim()
+                }) });
+                closeModal();
+                await route();
+              } catch (err) { window.alert(err.message || 'Не удалось сохранить'); }
+            };
+          });
+        return;
+      }
+      if (act === 'reset') {
+        const name = btn.dataset.name || 'менеджера';
+        if (!window.confirm(`Сбросить пароль для «${name}»? Все его активные сессии будут завершены.`)) return;
+      }
+      if (act === 'delete') {
+        const name = btn.dataset.name || 'этого менеджера';
+        if (!window.confirm(`Удалить менеджера «${name}»? Доступ будет закрыт, активные сессии отозваны. История клиентов, звонков и задач сохранится.`)) return;
+      }
+      try {
+        if (act === 'revoke') await api(`/api/users/${id}/revoke-sessions`, { method: 'POST', body: '{}' });
+        else if (act === 'delete') await api(`/api/users/${id}`, { method: 'DELETE' });
+        else if (act === 'reset') {
+          const result = await api(`/api/users/${id}/reset-password`, { method: 'POST', body: '{}' });
+          window.alert(`Временный пароль для ${manager?.full_name || 'менеджера'}:\n\n${result.temporary_password}\n\nСкопируйте его сейчас. Повторно посмотреть пароль будет невозможно.`);
+        } else await api(`/api/users/${id}/${act}`, { method: 'POST', body: '{}' });
+        await route();
+      } catch (err) {
+        window.alert(err.message || 'Не удалось выполнить действие');
+      }
     });
   }
 
@@ -263,6 +356,7 @@
       <p id="c_err" class="form-error" hidden></p>
       <div id="person-fields">
         <label>ФИО<input id="c_full_name" required></label>
+        <label>ИИН<input id="c_iin" inputmode="numeric" maxlength="12" pattern="[0-9]{12}" placeholder="12 цифр (необязательно)"></label>
         <div class="grid-2">
           <label>Основной телефон<input id="c_phone_primary" type="tel" required></label>
           <label>Дополнительный телефон<input id="c_phone_secondary" type="tel"></label>
@@ -369,6 +463,7 @@
           body = {
             type: 'person',
             full_name: fullName,
+            iin: ($('c_iin').value || '').replace(/\D/g, '') || null,
             phone_primary: phone,
             phone_secondary: ($('c_phone_secondary').value || '').trim() || null,
             address: ($('c_address').value || '').trim() || null,
@@ -433,13 +528,13 @@
           btn.disabled = false;
           const dups = err.payload && err.payload.duplicates;
           if (Array.isArray(dups) && dups.length) {
-            const reason = { phone: 'телефону', bin: 'БИН', company_name: 'названию компании' };
+            const reason = { iin: 'ИИН', bin: 'БИН' };
             $('c_dup').hidden = false;
-            $('c_dup').innerHTML = 'Найдены совпадения, запись не создана:<ul>' + dups.map((d) => {
+            $('c_dup').innerHTML = 'Найдена запись с таким же идентификатором — ИИН/БИН. Создание заблокировано:<ul>' + dups.map((d) => {
               const who = esc(d.company_name || d.full_name || ('#' + d.id));
               const why = reason[d.match_reason] || d.match_reason;
               return `<li>по ${esc(why)}${d.match_value ? ' ' + esc(d.match_value) : ''} — ${who}</li>`;
-            }).join('') + '</ul>Измените телефон или БИН. Автоматическое объединение не выполняется.';
+            }).join('') + '</ul>Телефон может повторяться у разных клиентов. Для создания проверьте ИИН или БИН.';
             $('c_err').hidden = true;
             return;
           }
@@ -453,12 +548,38 @@
     const users = (await api('/api/users')).users.filter((u) => u.role === 'manager');
     root.innerHTML = `<div class="toolbar">
       <button type="button" id="add-client">+ Добавить клиента</button>
-      <input id="q" placeholder="Поиск по ФИО, компании, телефону, БИН">
-      <select id="ftype"><option value="">Все типы</option><option value="person">Физлица</option><option value="company">Юрлица</option></select>
+      <input id="q" placeholder="Поиск по ФИО, компании, телефону, ИИН, БИН">
+      <select id="ftype">
+        <option value="">Все клиенты</option>
+        <option value="person">Физические лица</option>
+        <option value="company">Юридические лица</option>
+      </select>
       <button type="button" id="reload" class="btn secondary">Найти</button>
-    </div><div class="card" id="clist"></div>`;
+    </div>
+    <div class="muted" id="client-count" aria-live="polite"></div>
+    <div class="card" id="clist"></div>
+    <div class="toolbar" id="client-pagination">
+      <button type="button" id="clients-prev" class="btn secondary">Назад</button>
+      <span id="clients-page"></span>
+      <button type="button" id="clients-next" class="btn secondary">Далее</button>
+    </div>`;
+    let page = 1;
+    const perPage = 100;
+    let total = 0;
     const draw = async () => {
-      const d = await api('/api/clients?' + qs({ q: $('q').value, type: $('ftype').value, per_page: 100 }));
+      const d = await api('/api/clients?' + qs({
+        q: $('q').value.trim(),
+        type: $('ftype').value,
+        page,
+        per_page: perPage
+      }));
+      total = Number(d.total || 0);
+      const pages = Math.max(1, Math.ceil(total / perPage));
+      if (page > pages) page = pages;
+      const category = $('ftype').value === 'person'
+        ? 'Физические лица'
+        : ($('ftype').value === 'company' ? 'Юридические лица' : 'Все клиенты');
+      $('client-count').textContent = category + ': ' + total;
       $('clist').innerHTML = table(
         ['Клиент', 'Тип', 'Телефон', 'Статус', 'Менеджер', ''],
         d.items.map((c) => `<tr>
@@ -468,6 +589,9 @@
           <td>${esc(c.manager_name || '')}</td>
           <td><button class="btn secondary" data-assign="${c.id}">Назначить</button></td></tr>`)
       );
+      $('clients-page').textContent = 'Страница ' + page + ' из ' + pages;
+      $('clients-prev').disabled = page <= 1;
+      $('clients-next').disabled = page >= pages;
       $('clist').querySelectorAll('[data-open]').forEach((a) => a.onclick = (e) => { e.preventDefault(); openClient(a.dataset.open); });
       $('clist').querySelectorAll('[data-assign]').forEach((b) => b.onclick = () => {
         const opts = users.map((u) => `<option value="${u.id}">${esc(u.full_name)}</option>`).join('');
@@ -480,7 +604,11 @@
       });
     };
     $('add-client').onclick = () => openCreateClient(users, draw);
-    $('reload').onclick = draw;
+    $('reload').onclick = () => { page = 1; draw(); };
+    $('ftype').onchange = () => { page = 1; draw(); };
+    $('q').onkeydown = (e) => { if (e.key === 'Enter') { page = 1; draw(); } };
+    $('clients-prev').onclick = () => { if (page > 1) { page -= 1; draw(); } };
+    $('clients-next').onclick = () => { if (page < Math.ceil(total / perPage)) { page += 1; draw(); } };
     await draw();
   }
 
@@ -544,6 +672,7 @@
       if (tab === 'info') {
         return infoHtml + `<div class="client-form"><h4>Изменить данные</h4>
           ${person ? `<label>ФИО<input id="e_full_name" value="${esc(c.full_name || '')}"></label>
+            <label>ИИН<input id="e_iin" inputmode="numeric" maxlength="12" value="${esc(c.iin || '')}" placeholder="12 цифр (необязательно)"></label>
             <label>Адрес<input id="e_address" value="${esc(c.address || '')}"></label>
             <label>Потребность<input id="e_need" value="${esc(c.need || '')}"></label>`
             : `<label>Компания<input id="e_company_name" value="${esc(c.company_name || '')}"></label>
@@ -618,17 +747,19 @@
       }
       if (tab === 'applications') {
         const rows = (c.applications || []).map((t) => `<tr>
-          <td>${esc(t.created_at)}</td><td>${esc(t.user_name)}</td>
-          <td>${esc(t.from_label || '—')} → ${esc(t.to_label)}</td></tr>`);
-        return `<p class="muted">Заявки — переходы статуса «Заявка получена» по этому клиенту.</p>
-          ${rows.length ? table(['Дата', 'Кто', 'Переход'], rows) : emptyMsg('Заявок по этому клиенту нет.')}`;
+          <td>${esc(t.created_at)}</td><td>${esc(t.user_name || '')}</td>
+          <td>${esc(t.comment || 'Заявка создана')}</td></tr>`);
+        return `<p class="muted">Заявки, зарегистрированные по этому клиенту.</p>
+          <button type="button" id="client-create-application">+ Создать заявку</button>
+          ${rows.length ? table(['Дата', 'Менеджер', 'Комментарий'], rows) : emptyMsg('Заявок по этому клиенту пока нет.')}`;
       }
       if (tab === 'connections') {
         const rows = (c.connections || []).map((t) => `<tr>
           <td>${esc(t.created_at)}</td><td>${esc(t.user_name)}</td>
           <td>${esc(t.from_label || '—')} → ${esc(t.to_label)}</td></tr>`);
-        return `<p class="muted">Подключения — переходы в «В процессе подключения» и «Подключён». Статус «Подключён» подтверждает руководитель.</p>
-          ${rows.length ? table(['Дата', 'Кто', 'Переход'], rows) : emptyMsg('Подключений по этому клиенту нет.')}`;
+        return `<p class="muted">Подключения — отдельная фиксация начала работ и дальнейшего перехода клиента к подключению.</p>
+          <button type="button" class="btn" id="client-start-connection" ${c.status === 'connecting' || c.status === 'connected' ? 'disabled' : ''}>+ Зафиксировать начало подключения</button>
+          ${rows.length ? table(['Дата', 'Кто', 'Переход'], rows) : emptyMsg('Подключений по этому клиенту пока нет.')}`;
       }
       const hist = (c.timeline || []).map((t) => `<li>
         <strong>${esc(t.type_label)}</strong> · ${esc(t.created_at)} · ${esc(t.user_name)}
@@ -662,8 +793,12 @@
         </div>
       </div>
       <div id="cform"></div>
-      <div class="tabs" id="ctabs">${tabs.map(([k, l]) =>
-        `<button type="button" class="tab${k === savedTab ? ' active' : ''}" data-ctab="${k}">${esc(l)}</button>`).join('')}</div>
+      <div class="more-wrap client-sections-wrap">
+        <button type="button" class="btn secondary" id="client-sections-toggle">Разделы клиента: ${esc((tabs.find(([k]) => k === savedTab) || tabs[0])[1])} ▾</button>
+        <div id="client-sections-menu" class="more-menu" hidden>
+          ${tabs.map(([k, l]) => `<button type="button" data-client-section="${k}">${esc(l)}</button>`).join('')}
+        </div>
+      </div>
       <div id="csec">${sectionHtml(savedTab)}</div>`;
 
     const forms = {
@@ -819,13 +954,10 @@
               result: 'offer_sent', idempotency_key: 'web-offer-' + Date.now()
             }) });
           } else if (name === 'application') {
-            if ($('f_comment').value) {
-              await api(`/api/clients/${id}/interactions`, { method: 'POST', body: JSON.stringify({
-                type: 'note', comment: $('f_comment').value, result: 'application_received',
-                idempotency_key: 'web-app-note-' + Date.now()
-              }) });
-            }
-            await api(`/api/clients/${id}/status`, { method: 'POST', body: JSON.stringify({ status: 'application_received' }) });
+            await api(`/api/clients/${id}/application`, { method: 'POST', body: JSON.stringify({
+              comment: $('f_comment').value,
+              idempotency_key: 'web-application-' + crypto.randomUUID()
+            }) });
           }
           reload();
         } catch (err) {
@@ -837,10 +969,19 @@
     openHtml('Карточка клиента', html, () => {
       const drawTab = (tab) => {
         state.clientTab = tab;
-        document.querySelectorAll('#ctabs .tab').forEach((b) => b.classList.toggle('active', b.dataset.ctab === tab));
+        const label = (tabs.find(([key]) => key === tab) || tabs[0])[1];
+        $('client-sections-toggle').textContent = 'Разделы клиента: ' + label + ' ▾';
+        $('client-sections-menu').hidden = true;
         $('csec').innerHTML = sectionHtml(tab);
         bindSection();
       };
+      if ($('client-sections-toggle')) $('client-sections-toggle').onclick = (e) => {
+        e.stopPropagation();
+        $('client-sections-menu').hidden = !$('client-sections-menu').hidden;
+      };
+      document.querySelectorAll('[data-client-section]').forEach((b) => {
+        b.onclick = () => drawTab(b.dataset.clientSection);
+      });
       document.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => {
         if ($('more-menu')) $('more-menu').hidden = true;
         showForm(b.dataset.act);
@@ -872,13 +1013,29 @@
       };
       document.querySelectorAll('#ctabs .tab').forEach((b) => { b.onclick = () => drawTab(b.dataset.ctab); });
       const bindSection = () => {
+        if ($('client-create-application')) $('client-create-application').onclick = () => showForm('application');
+        if ($('client-start-connection')) $('client-start-connection').onclick = async () => {
+          const button = $('client-start-connection');
+          button.disabled = true;
+          try {
+            await api(`/api/clients/${id}/status`, {
+              method: 'POST',
+              body: JSON.stringify({ status: 'connecting' })
+            });
+            reload();
+          } catch (err) {
+            button.disabled = false;
+            const section = $('csec');
+            section.insertAdjacentHTML('afterbegin', `<p class="form-error">${esc(err.message)}</p>`);
+          }
+        };
         if ($('save-info')) $('save-info').onclick = async () => {
           const body = {
             phone_primary: $('e_phone_primary').value, phone_secondary: $('e_phone_secondary').value,
             current_provider: $('e_current_provider').value, comment: $('e_comment').value
           };
           if (person) {
-            body.full_name = $('e_full_name').value; body.address = $('e_address').value; body.need = $('e_need').value;
+            body.full_name = $('e_full_name').value; body.iin = $('e_iin').value.replace(/\D/g, '') || null; body.address = $('e_address').value; body.need = $('e_need').value;
           } else {
             body.company_name = $('e_company_name').value; body.bin = $('e_bin').value;
             body.legal_address = $('e_legal_address').value; body.actual_address = $('e_actual_address').value;
@@ -995,7 +1152,7 @@
 
   async function pageStatusList(root, status, title) {
     const ov = (await api('/api/analytics/overview?' + qs())).overview;
-    const d = await api('/api/clients?' + qs({ status_event: status, per_page: 200 }));
+    const d = await api('/api/clients?' + qs(status === 'application_received' ? { application_event: 1, per_page: 200 } : { status_event: status, per_page: 200 }));
     const periodN = (ov.by_status_period || {})[status] || 0;
     const nowN = (ov.by_status || {})[status] || 0;
     root.innerHTML = `<p class="muted">За выбранный период переходов: ${periodN}. Сейчас в этом статусе: ${nowN}.</p>
@@ -1203,6 +1360,7 @@
         ])}
       </div>`;
     host.querySelectorAll('[data-open]').forEach((a) => a.onclick = (e) => { e.preventDefault(); openClient(a.dataset.open); });
+    enableUnverifiedSimDetails(host);
   }
 
   async function drawManagersAnalytics(host) {

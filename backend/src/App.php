@@ -209,6 +209,8 @@ final class App
         $r->get('/api/users', fn (Request $req, array $user) => ['users' => $this->users->list($user)], true, ['admin']);
         $r->post('/api/users', fn (Request $req, array $user) => ['user' => $this->users->create($req->body, $user, $req)], true, ['admin']);
         $r->patch('/api/users/{id}', fn (Request $req, array $user) => ['user' => $this->users->update((int) $req->param('id'), $req->body, $user, $req)], true, ['admin']);
+        $r->post('/api/users/{id}/reset-password', fn (Request $req, array $user) => $this->users->resetManagerPassword((int) $req->param('id'), $user, $req), true, ['admin']);
+        $r->delete('/api/users/{id}', fn (Request $req, array $user) => $this->users->deleteManager((int) $req->param('id'), $user, $req), true, ['admin']);
         $r->post('/api/users/{id}/block', fn (Request $req, array $user) => ['user' => $this->users->setBlocked((int) $req->param('id'), true, $user, $req)], true, ['admin']);
         $r->post('/api/users/{id}/unblock', fn (Request $req, array $user) => ['user' => $this->users->setBlocked((int) $req->param('id'), false, $user, $req)], true, ['admin']);
         $r->post('/api/users/{id}/revoke-sessions', function (Request $req, array $user) {
@@ -251,6 +253,31 @@ final class App
         $r->post('/api/clients/{id}/calls', fn (Request $req, array $user) => [
             'call' => $this->interactions->recordCall((int) $req->param('id'), $req->body, $user, $req),
         ]);
+        $r->get('/api/analytics/unverified-calls', function (Request $req, array $user) {
+            $this->access->requireAdmin($user);
+            [$from, $to] = $this->analytics->period($req->query);
+            $managerId = (int) ($req->query['manager_id'] ?? 0);
+            $managerFilter = $managerId > 0 ? ' AND cl.user_id = :manager_id' : '';
+            $params = ['from' => $from, 'to' => $to];
+            if ($managerId > 0) {
+                $params['manager_id'] = $managerId;
+            }
+            $items = $this->db->fetchAll(
+                "SELECT cl.id, cl.client_id, cl.user_id, cl.phone, cl.direction,
+                        cl.started_at, cl.duration_sec, cl.talk_duration_sec,
+                        cl.connected, cl.result, cl.source, cl.data_source,
+                        c.full_name, c.company_name, u.full_name AS manager_name
+                 FROM calls cl
+                 INNER JOIN clients c ON c.id = cl.client_id
+                 LEFT JOIN users u ON u.id = cl.user_id
+                 WHERE cl.data_source = 'unverified'
+                   AND cl.started_at >= :from AND cl.started_at <= :to {$managerFilter}
+                 ORDER BY cl.started_at DESC
+                 LIMIT 500",
+                $params
+            );
+            return ['items' => $items, 'total' => count($items), 'period' => ['from' => $from, 'to' => $to]];
+        }, true, ['admin']);
         $r->patch('/api/calls/{id}', fn (Request $req, array $user) => [
             'call' => $this->interactions->completeCall((int) $req->param('id'), $req->body, $user, $req),
         ]);
