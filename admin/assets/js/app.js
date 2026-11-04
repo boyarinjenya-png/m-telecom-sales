@@ -174,6 +174,55 @@
     }
   }
 
+  async function showUnverifiedSimCalls(host) {
+    let panel = host.querySelector('#unverified-sim-details');
+    if (panel) { panel.remove(); return; }
+    panel = document.createElement('div');
+    panel.id = 'unverified-sim-details';
+    panel.className = 'card';
+    panel.innerHTML = '<h3>Неподтверждённые SIM-звонки</h3><p class="muted">Загрузка списка…</p>';
+    host.appendChild(panel);
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    try {
+      const data = await api('/api/analytics/unverified-calls?' + aqs());
+      const items = data.items || [];
+      panel.innerHTML = '<h3>Неподтверждённые SIM-звонки</h3>' +
+        '<p class="muted">Период: ' + esc(data.period?.from || '') + ' — ' + esc(data.period?.to || '') +
+        '. Записей: ' + items.length + (data.total >= 500 ? ' (показаны первые 500)' : '') + '</p>' +
+        (items.length ? table(
+          ['Дата', 'Менеджер', 'Клиент', 'Телефон', 'Результат', 'Длительность', 'Источник'],
+          items.map((call) => `<tr>
+            <td>${esc(call.started_at || '')}</td>
+            <td>${esc(call.manager_name || '—')}</td>
+            <td>${esc(call.company_name || call.full_name || ('Клиент #' + call.client_id))}</td>
+            <td>${esc(call.phone || '—')}</td>
+            <td>${esc(call.result || 'не указан')}</td>
+            <td>${esc(call.talk_duration_sec ?? call.duration_sec ?? 0)} сек.</td>
+            <td>${esc(call.data_source || call.source || 'unverified')}</td>
+          </tr>`)
+        ) : '<p>За выбранный период неподтверждённых SIM-звонков нет.</p>') +
+        '<button type="button" class="btn secondary" id="close-unverified-sim">Скрыть список</button>';
+      const close = panel.querySelector('#close-unverified-sim');
+      if (close) close.onclick = () => panel.remove();
+    } catch (err) {
+      panel.innerHTML = '<h3>Неподтверждённые SIM-звонки</h3><p class="form-error">' + esc(err.message || 'Не удалось загрузить звонки') + '</p>';
+    }
+  }
+
+  function enableUnverifiedSimDetails(host) {
+    const label = [...host.querySelectorAll('.kpi .l')].find((el) => el.textContent.trim() === 'Неподтверждённые SIM');
+    if (!label) return;
+    const tile = label.closest('.kpi');
+    tile.classList.add('clickable');
+    tile.setAttribute('role', 'button');
+    tile.setAttribute('tabindex', '0');
+    tile.title = 'Нажмите, чтобы посмотреть список звонков';
+    tile.addEventListener('click', () => showUnverifiedSimCalls(host));
+    tile.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showUnverifiedSimCalls(host); }
+    });
+  }
+
   async function pageOverview(root) {
     const d = (await api('/api/analytics/overview?' + qs())).overview;
     const cmp = (await api('/api/analytics/managers?' + qs())).managers;
@@ -198,6 +247,7 @@
     }) + `<div class="card"><h3>Сравнение менеджеров за период</h3>
       <p class="muted">«В работе» и «Просрочено» — текущий снимок. Остальные колонки — события периода.</p>
       ${renderManagerTable(cmp)}</div>`;
+    enableUnverifiedSimDetails(root);
   }
 
   function renderManagerTable(rows) {
@@ -1278,6 +1328,7 @@
         ])}
       </div>`;
     host.querySelectorAll('[data-open]').forEach((a) => a.onclick = (e) => { e.preventDefault(); openClient(a.dataset.open); });
+    enableUnverifiedSimDetails(host);
   }
 
   async function drawManagersAnalytics(host) {
