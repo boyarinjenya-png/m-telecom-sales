@@ -255,6 +255,12 @@ final class App
         $r->get('/api/analytics/unverified-calls', function (Request $req, array $user) {
             $this->access->requireAdmin($user);
             [$from, $to] = $this->analytics->period($req->query);
+            $managerId = (int) ($req->query['manager_id'] ?? 0);
+            $managerFilter = $managerId > 0 ? ' AND cl.user_id = :manager_id' : '';
+            $params = ['from' => $from, 'to' => $to];
+            if ($managerId > 0) {
+                $params['manager_id'] = $managerId;
+            }
             $items = $this->db->fetchAll(
                 "SELECT cl.id, cl.client_id, cl.user_id, cl.phone, cl.direction,
                         cl.started_at, cl.duration_sec, cl.talk_duration_sec,
@@ -264,10 +270,10 @@ final class App
                  INNER JOIN clients c ON c.id = cl.client_id
                  LEFT JOIN users u ON u.id = cl.user_id
                  WHERE cl.data_source = 'unverified'
-                   AND cl.started_at >= :from AND cl.started_at <= :to
+                   AND cl.started_at >= :from AND cl.started_at <= :to {$managerFilter}
                  ORDER BY cl.started_at DESC
                  LIMIT 500",
-                ['from' => $from, 'to' => $to]
+                $params
             );
             return ['items' => $items, 'total' => count($items), 'period' => ['from' => $from, 'to' => $to]];
         }, true, ['admin']);
