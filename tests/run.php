@@ -915,6 +915,43 @@ $missingKey = req($app, 'POST', '/api/clients/' . $offId . '/application', [
 ], $mgrTok);
 assert_true(($missingKey['status'] ?? 0) >= 400, 'createApplication without idempotency_key rejected');
 
+// --- manager account editing and secure one-time password reset ---
+$manager2Id = (int) ($mgr2['json']['user']['id'] ?? 0);
+$managerUpdate = req($app, 'PATCH', '/api/users/' . $manager2Id, [
+    'login' => 'andrey.manager',
+    'full_name' => 'Андрей Менеджер',
+    'phone' => '77075553322',
+], $adminToken);
+assert_true(
+    ($managerUpdate['status'] ?? 0) === 200
+    && ($managerUpdate['json']['user']['login'] ?? '') === 'andrey.manager'
+    && ($managerUpdate['json']['user']['full_name'] ?? '') === 'Андрей Менеджер',
+    'admin can edit manager login, full name and phone'
+);
+$duplicateLogin = req($app, 'PATCH', '/api/users/' . (int) ($mgr1['json']['user']['id'] ?? 0), [
+    'login' => 'andrey.manager',
+], $adminToken);
+assert_true(($duplicateLogin['status'] ?? 0) === 409, 'manager login must be unique');
+$managerReset = req($app, 'POST', '/api/users/' . $manager2Id . '/reset-password', [], $adminToken);
+$tempPassword = (string) ($managerReset['json']['temporary_password'] ?? '');
+assert_true(
+    ($managerReset['status'] ?? 0) === 200
+    && strlen($tempPassword) >= 20
+    && !empty($managerReset['json']['sessions_revoked']),
+    'admin can generate one-time temporary manager password and revoke sessions'
+);
+$managerOldPassword = req($app, 'POST', '/api/auth/login', [
+    'login' => 'andrey.manager',
+    'password' => 'Manager#2',
+]);
+assert_true(($managerOldPassword['status'] ?? 0) === 401, 'old manager password rejected after reset');
+$managerTempLogin = req($app, 'POST', '/api/auth/login', [
+    'login' => 'andrey.manager',
+    'password' => $tempPassword,
+]);
+assert_true(($managerTempLogin['status'] ?? 0) === 200, 'temporary manager password works once issued');
+$t2 = $managerTempLogin['json']['token'] ?? '';
+
 // --- manager soft-delete: revoke access, preserve history, hide from active lists ---
 $manager2Id = (int) ($mgr2['json']['user']['id'] ?? 0);
 $managerDelete = req($app, 'DELETE', '/api/users/' . $manager2Id, [], $adminToken);
