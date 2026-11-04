@@ -47,6 +47,13 @@ final class ClientService
             $where[] = 'c.manager_id = :mid';
             $params['mid'] = (int) $filters['manager_id'];
         }
+        if (!empty($filters['application_event'])) {
+            $where[] = "EXISTS (
+                SELECT 1 FROM interactions ai
+                WHERE ai.client_id = c.id
+                  AND (ai.result = 'application_received' OR ai.payload_json LIKE '%\\"kind\\":\\"application\\"%')
+            )";
+        }
         if (!empty($filters['status_event']) && !empty($filters['from']) && !empty($filters['to'])) {
             $where[] = 'EXISTS (
                 SELECT 1 FROM status_history sh
@@ -648,21 +655,24 @@ final class ClientService
              ORDER BY sh.created_at DESC, sh.id DESC',
             $p
         );
-        $applications = [];
         $connections = [];
         foreach ($history as &$ev) {
             $ev['from_label'] = $ev['from_status'] ? (Catalog::STATUSES[$ev['from_status']] ?? $ev['from_status']) : null;
             $ev['to_label'] = Catalog::STATUSES[$ev['to_status']] ?? $ev['to_status'];
-            if (($ev['to_status'] ?? '') === 'application_received') {
-                $applications[] = $ev;
-            }
             if (in_array($ev['to_status'] ?? '', ['connecting', 'connected'], true)) {
                 $connections[] = $ev;
             }
         }
         unset($ev);
         $client['status_history'] = $history;
-        $client['applications'] = $applications;
+        $client['applications'] = array_values(array_filter(
+            $client['timeline'] ?? [],
+            static function (array $item): bool {
+                $payload = $item['payload'] ?? [];
+                return ($item['result'] ?? '') === 'application_received'
+                    || (($payload['kind'] ?? '') === 'application');
+            }
+        ));
         $client['connections'] = $connections;
     }
 
