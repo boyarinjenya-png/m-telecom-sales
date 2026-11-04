@@ -213,8 +213,9 @@
   }
 
   async function pageManagers(root) {
-    const users = (await api('/api/users')).users.filter((u) => u.role === 'manager');
-    const cmp = (await api('/api/analytics/managers?' + qs())).managers;
+    const users = (await api('/api/users')).users.filter((u) => u.role === 'manager' && u.status !== 'deleted');
+    const visibleIds = new Set(users.map((u) => Number(u.id)));
+    const cmp = (await api('/api/analytics/managers?' + qs())).managers.filter((u) => visibleIds.has(Number(u.id)));
     root.innerHTML = `<div class="toolbar"><button id="add-manager">Добавить менеджера</button></div>
       <div class="card">${table(['ФИО', 'Логин', 'Телефон', 'Статус', ''], users.map((u) => `<tr>
         <td>${esc(u.full_name)}</td><td>${esc(u.login)}</td><td>${esc(u.phone || '')}</td>
@@ -222,6 +223,7 @@
         <td>
           <button class="btn secondary" data-act="${u.status === 'blocked' ? 'unblock' : 'block'}" data-id="${u.id}">${u.status === 'blocked' ? 'Разблокировать' : 'Заблокировать'}</button>
           <button class="btn secondary" data-act="revoke" data-id="${u.id}">Отозвать сессии</button>
+          <button class="btn danger" data-act="delete" data-id="${u.id}" data-name="${esc(u.full_name)}">Удалить</button>
         </td></tr>`))}</div>
       <div class="card"><h3>Эффективность</h3>${renderManagerTable(cmp)}</div>`;
     $('add-manager').onclick = () => openForm('Новый менеджер', [
@@ -232,9 +234,18 @@
     });
     root.querySelectorAll('[data-act]').forEach((btn) => btn.onclick = async () => {
       const id = btn.dataset.id, act = btn.dataset.act;
-      if (act === 'revoke') await api(`/api/users/${id}/revoke-sessions`, { method: 'POST', body: '{}' });
-      else await api(`/api/users/${id}/${act}`, { method: 'POST', body: '{}' });
-      route();
+      if (act === 'delete') {
+        const name = btn.dataset.name || 'этого менеджера';
+        if (!window.confirm(`Удалить менеджера «${name}»? Доступ будет закрыт, активные сессии отозваны. История клиентов, звонков и задач сохранится.`)) return;
+      }
+      try {
+        if (act === 'revoke') await api(`/api/users/${id}/revoke-sessions`, { method: 'POST', body: '{}' });
+        else if (act === 'delete') await api(`/api/users/${id}`, { method: 'DELETE' });
+        else await api(`/api/users/${id}/${act}`, { method: 'POST', body: '{}' });
+        await route();
+      } catch (err) {
+        window.alert(err.message || 'Не удалось выполнить действие');
+      }
     });
   }
 
