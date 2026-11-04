@@ -466,12 +466,38 @@
     const users = (await api('/api/users')).users.filter((u) => u.role === 'manager');
     root.innerHTML = `<div class="toolbar">
       <button type="button" id="add-client">+ Добавить клиента</button>
-      <input id="q" placeholder="Поиск по ФИО, компании, телефону, БИН">
-      <select id="ftype"><option value="">Все типы</option><option value="person">Физлица</option><option value="company">Юрлица</option></select>
+      <input id="q" placeholder="Поиск по ФИО, компании, телефону, ИИН, БИН">
+      <select id="ftype">
+        <option value="">Все клиенты</option>
+        <option value="person">Физические лица</option>
+        <option value="company">Юридические лица</option>
+      </select>
       <button type="button" id="reload" class="btn secondary">Найти</button>
-    </div><div class="card" id="clist"></div>`;
+    </div>
+    <div class="muted" id="client-count" aria-live="polite"></div>
+    <div class="card" id="clist"></div>
+    <div class="toolbar" id="client-pagination">
+      <button type="button" id="clients-prev" class="btn secondary">Назад</button>
+      <span id="clients-page"></span>
+      <button type="button" id="clients-next" class="btn secondary">Далее</button>
+    </div>`;
+    let page = 1;
+    const perPage = 100;
+    let total = 0;
     const draw = async () => {
-      const d = await api('/api/clients?' + qs({ q: $('q').value, type: $('ftype').value, per_page: 100 }));
+      const d = await api('/api/clients?' + qs({
+        q: $('q').value.trim(),
+        type: $('ftype').value,
+        page,
+        per_page: perPage
+      }));
+      total = Number(d.total || 0);
+      const pages = Math.max(1, Math.ceil(total / perPage));
+      if (page > pages) page = pages;
+      const category = $('ftype').value === 'person'
+        ? 'Физические лица'
+        : ($('ftype').value === 'company' ? 'Юридические лица' : 'Все клиенты');
+      $('client-count').textContent = category + ': ' + total;
       $('clist').innerHTML = table(
         ['Клиент', 'Тип', 'Телефон', 'Статус', 'Менеджер', ''],
         d.items.map((c) => `<tr>
@@ -481,6 +507,9 @@
           <td>${esc(c.manager_name || '')}</td>
           <td><button class="btn secondary" data-assign="${c.id}">Назначить</button></td></tr>`)
       );
+      $('clients-page').textContent = 'Страница ' + page + ' из ' + pages;
+      $('clients-prev').disabled = page <= 1;
+      $('clients-next').disabled = page >= pages;
       $('clist').querySelectorAll('[data-open]').forEach((a) => a.onclick = (e) => { e.preventDefault(); openClient(a.dataset.open); });
       $('clist').querySelectorAll('[data-assign]').forEach((b) => b.onclick = () => {
         const opts = users.map((u) => `<option value="${u.id}">${esc(u.full_name)}</option>`).join('');
@@ -493,7 +522,11 @@
       });
     };
     $('add-client').onclick = () => openCreateClient(users, draw);
-    $('reload').onclick = draw;
+    $('reload').onclick = () => { page = 1; draw(); };
+    $('ftype').onchange = () => { page = 1; draw(); };
+    $('q').onkeydown = (e) => { if (e.key === 'Enter') { page = 1; draw(); } };
+    $('clients-prev').onclick = () => { if (page > 1) { page -= 1; draw(); } };
+    $('clients-next').onclick = () => { if (page < Math.ceil(total / perPage)) { page += 1; draw(); } };
     await draw();
   }
 
