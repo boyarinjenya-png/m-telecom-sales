@@ -171,7 +171,12 @@ $forced = req($app, 'POST', '/api/clients', [
     'force' => true,
     'idempotency_key' => 'client-ivan-forced',
 ], $t1);
-assert_true($forced['status'] === 200, 'force create after IIN duplicate warning');
+assert_true(
+    $forced['status'] === 409
+    && !empty($forced['json']['duplicates'])
+    && ($forced['json']['duplicates'][0]['match_reason'] ?? '') === 'iin',
+    'force flag does not bypass a duplicate IIN'
+);
 
 $company = req($app, 'POST', '/api/clients', [
     'type' => 'company',
@@ -235,6 +240,29 @@ foreach ($iinSearch['json']['items'] ?? [] as $item) {
 assert_true(($iinSearch['status'] ?? 0) === 200 && $iinFound, 'client search finds IIN');
 $badIinEdit = req($app, 'PUT', '/api/clients/' . $clientId, ['iin' => '12345'], $t1);
 assert_true(($badIinEdit['status'] ?? 0) === 400, 'edited IIN must be 12 digits');
+$otherPersonId = (int) ($sharedWithCompany['json']['client']['id'] ?? 0);
+$dupIinEdit = req($app, 'PUT', '/api/clients/' . $otherPersonId, ['iin' => '880101300123'], $t1);
+assert_true(
+    ($dupIinEdit['status'] ?? 0) === 409
+    && ($dupIinEdit['json']['duplicates'][0]['match_reason'] ?? '') === 'iin',
+    'edited IIN duplicate is rejected'
+);
+$keepOwnIin = req($app, 'PUT', '/api/clients/' . $clientId, ['iin' => '8801 0130 0123'], $t1);
+assert_true(
+    ($keepOwnIin['status'] ?? 0) === 200 && ($keepOwnIin['json']['client']['iin'] ?? '') === '880101300123',
+    'client keeps its own IIN'
+);
+$spacedIin = req($app, 'POST', '/api/clients', [
+    'type' => 'person',
+    'full_name' => 'ИИН с пробелами',
+    'phone_primary' => '77016667788',
+    'iin' => '7701 01 300 111',
+    'idempotency_key' => 'spaced-iin-person',
+], $t1);
+assert_true(
+    ($spacedIin['status'] ?? 0) === 200 && ($spacedIin['json']['client']['iin'] ?? '') === '770101300111',
+    'created IIN with separators is normalized'
+);
 
 $foreign = req($app, 'GET', '/api/clients/' . $clientId, [], $t2);
 assert_true($foreign['status'] === 403, 'manager cannot read foreign client');
@@ -1003,6 +1031,23 @@ $duplicateLogin = req($app, 'PATCH', '/api/users/' . (int) ($mgr1['json']['user'
     'login' => 'andrey.manager',
 ], $adminToken);
 assert_true(($duplicateLogin['status'] ?? 0) === 409, 'manager login must be unique');
+$longLogin = str_repeat('a', 65);
+$longLoginEdit = req($app, 'PATCH', '/api/users/' . $manager2Id, ['login' => $longLogin], $adminToken);
+assert_true(($longLoginEdit['status'] ?? 0) === 400, 'manager login longer than 64 characters is rejected');
+$loginUnchanged = req($app, 'GET', '/api/users', [], $adminToken);
+$stillShort = false;
+foreach ($loginUnchanged['json']['users'] ?? [] as $u) {
+    if ((int) ($u['id'] ?? 0) === $manager2Id && ($u['login'] ?? '') === 'andrey.manager') {
+        $stillShort = true;
+    }
+}
+assert_true($stillShort, 'rejected long login is not stored');
+$longLoginCreate = req($app, 'POST', '/api/users', [
+    'login' => $longLogin,
+    'password' => 'Manager#65',
+    'full_name' => 'Слишком длинный логин',
+], $adminToken);
+assert_true(($longLoginCreate['status'] ?? 0) === 400, 'new manager login longer than 64 characters is rejected');
 $managerReset = req($app, 'POST', '/api/users/' . $manager2Id . '/reset-password', [], $adminToken);
 $tempPassword = (string) ($managerReset['json']['temporary_password'] ?? '');
 assert_true(
@@ -1069,6 +1114,58 @@ $keptClient = req($app, 'GET', '/api/clients/' . (int) $retryId1, [], $adminToke
 assert_true(($keptClient['status'] ?? 0) === 200, 'deleted manager client history remains');
 $managerCannotDelete = req($app, 'DELETE', '/api/users/' . (int) ($mgr1['json']['user']['id'] ?? 0), [], $t4);
 assert_true(($managerCannotDelete['status'] ?? 0) === 403, 'manager cannot delete another manager');
+
+$blockActive = req($app, 'POST', '/api/users/' . (int) ($mgr4['json']['user']['id'] ?? 0) . '/block', [], $adminToken);
+assert_true(
+    ($blockActive['status'] ?? 0) === 200 && ($blockActive['json']['user']['status'] ?? '') === 'blocked',
+    'active manager can be blocked'
+);
+$blockedManagerLogin = req($app, 'POST', '/api/auth/login', ['login' => 'manager4', 'password' => 'Manager#4']);
+assert_true(($blockedManagerLogin['status'] ?? 0) === 403, 'blocked manager cannot log in');
+$unblockActive = req($app, 'POST', '/api/users/' . (int) ($mgr4['json']['user']['id'] ?? 0) . '/unblock', [], $adminToken);
+assert_true(
+    ($unblockActive['status'] ?? 0) === 200 && ($unblockActive['json']['user']['status'] ?? '') === 'active',
+    'blocked manager can be unblocked'
+);
+$unblockedLogin = req($app, 'POST', '/api/auth/login', ['login' => 'manager4', 'password' => 'Manager#4']);
+assert_true(($unblockedLogin['status'] ?? 0) === 200, 'unblocked manager can log in');
+$unblockDeleted = req($app, 'POST', '/api/users/' . $manager2Id . '/unblock', [], $adminToken);
+assert_true(($unblockDeleted['status'] ?? 0) === 403, 'deleted manager cannot be activated');
+$blockDeleted = req($app, 'POST', '/api/users/' . $manager2Id . '/block', [], $adminToken);
+assert_true(($blockDeleted['status'] ?? 0) === 403, 'deleted manager cannot be blocked');
+$stillDeleted = $app->db->fetch('SELECT status FROM users WHERE id = :id', ['id' => $manager2Id]);
+assert_true(($stillDeleted['status'] ?? '') === 'deleted', 'deleted manager status stays deleted');
+
+$iinIndex = $app->db->fetch("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_clients_iin_unique'");
+assert_true($iinIndex !== null, 'unique IIN index exists after migration');
+$app->db->pdo()->exec('DROP INDEX IF EXISTS idx_clients_iin_unique');
+$app->db->pdo()->exec("UPDATE clients SET iin = '880101300123' WHERE id = " . (int) ($sharedPhone['json']['client']['id'] ?? 0));
+$migrationStopped = false;
+$migrationMessage = '';
+try {
+    (new MTelecom\Sales\Core\Migrator($app->db))->up();
+} catch (RuntimeException $e) {
+    $migrationStopped = true;
+    $migrationMessage = $e->getMessage();
+}
+$indexAfterReject = $app->db->fetch("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_clients_iin_unique'");
+assert_true(
+    $migrationStopped && $indexAfterReject === null && str_contains($migrationMessage, 'повторяющийся ИИН'),
+    'migration stops when duplicate IINs exist and does not create the index'
+);
+$app->db->pdo()->exec("UPDATE clients SET iin = NULL WHERE id = " . (int) ($sharedPhone['json']['client']['id'] ?? 0));
+(new MTelecom\Sales\Core\Migrator($app->db))->up();
+$iinIndexRestored = $app->db->fetch("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_clients_iin_unique'");
+assert_true($iinIndexRestored !== null, 'unique IIN index is created after duplicates are removed');
+
+$adminJs = (string) file_get_contents($root . '/admin/assets/js/app.js');
+$adminHtml = (string) file_get_contents($root . '/admin/index.html');
+assert_true(str_contains($adminJs, "['ИИН', esc(c.iin || '—')]"), 'person card summary shows IIN');
+assert_true(!str_contains($adminJs, 'id="c_iin" inputmode="numeric" maxlength="12"'), 'create IIN field is not clipped before normalization');
+assert_true(!str_contains($adminJs, 'id="e_iin" inputmode="numeric" maxlength="12"'), 'edit IIN field is not clipped before normalization');
+assert_true(str_contains($adminJs, 'id="e_err"'), 'client save errors have a visible place');
+assert_true(str_contains($adminJs, 'Данные клиента сохранены, но статус не изменён'), 'status save failure stays visible');
+assert_true(str_contains($adminJs, 'maxlength="64"') && str_contains($adminHtml, 'maxlength="64"'), 'login fields are limited to 64 characters');
 
 echo "\nPassed: {$passed}; Failed: {$failed}\n";
 exit($failed === 0 ? 0 : 1);

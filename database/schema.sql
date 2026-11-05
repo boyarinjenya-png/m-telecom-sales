@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS clients (
   INDEX idx_clients_manager (manager_id),
   INDEX idx_clients_phone (phone_primary_norm),
   INDEX idx_clients_bin (bin),
+  UNIQUE KEY idx_clients_iin_unique (iin),
   CONSTRAINT fk_clients_manager FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_clients_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

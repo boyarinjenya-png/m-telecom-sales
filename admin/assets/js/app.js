@@ -291,7 +291,7 @@
       if (act === 'edit') {
         openHtml('Учётная запись менеджера', `<h3>Учётная запись менеджера</h3>
           <label>ФИО<input id="manager-full-name" value="${esc(manager?.full_name || '')}" required></label>
-          <label>Логин<input id="manager-login" value="${esc(manager?.login || '')}" required></label>
+          <label>Логин<input id="manager-login" value="${esc(manager?.login || '')}" required maxlength="64"></label>
           <label>Телефон<input id="manager-phone" value="${esc(manager?.phone || '')}"></label>
           <p class="muted">Пароль здесь не отображается. Для смены используйте отдельную кнопку сброса пароля.</p>
           <button id="manager-save">Сохранить изменения</button>`, () => {
@@ -356,7 +356,7 @@
       <p id="c_err" class="form-error" hidden></p>
       <div id="person-fields">
         <label>ФИО<input id="c_full_name" required></label>
-        <label>ИИН<input id="c_iin" inputmode="numeric" maxlength="12" pattern="[0-9]{12}" placeholder="12 цифр (необязательно)"></label>
+        <label>ИИН<input id="c_iin" inputmode="numeric" placeholder="12 цифр, можно с пробелами"></label>
         <div class="grid-2">
           <label>Основной телефон<input id="c_phone_primary" type="tel" required></label>
           <label>Дополнительный телефон<input id="c_phone_secondary" type="tel"></label>
@@ -652,7 +652,7 @@
     const person = c.type !== 'company';
     const infoHtml = person
       ? kv([
-          ['ФИО', esc(c.full_name)], ['Основной телефон', esc(c.phone_primary)],
+          ['ФИО', esc(c.full_name)], ['ИИН', esc(c.iin || '—')], ['Основной телефон', esc(c.phone_primary)],
           ['Дополнительный телефон', esc(c.phone_secondary)],
           ['Адрес', esc(c.address)], ['Провайдер', esc(c.current_provider)],
           ['Потребность', esc(c.need)], ['Комментарий', esc(c.comment)],
@@ -672,7 +672,7 @@
       if (tab === 'info') {
         return infoHtml + `<div class="client-form"><h4>Изменить данные</h4>
           ${person ? `<label>ФИО<input id="e_full_name" value="${esc(c.full_name || '')}"></label>
-            <label>ИИН<input id="e_iin" inputmode="numeric" maxlength="12" value="${esc(c.iin || '')}" placeholder="12 цифр (необязательно)"></label>
+            <label>ИИН<input id="e_iin" inputmode="numeric" value="${esc(c.iin || '')}" placeholder="12 цифр, можно с пробелами"></label>
             <label>Адрес<input id="e_address" value="${esc(c.address || '')}"></label>
             <label>Потребность<input id="e_need" value="${esc(c.need || '')}"></label>`
             : `<label>Компания<input id="e_company_name" value="${esc(c.company_name || '')}"></label>
@@ -685,6 +685,7 @@
           <label>Провайдер<input id="e_current_provider" value="${esc(c.current_provider || '')}"></label>
           <label>Комментарий<textarea id="e_comment">${esc(c.comment || '')}</textarea></label>
           <label>Статус<select id="st">${statusOpts}</select></label>
+          <p id="e_err" class="form-error" hidden></p>
           <button type="button" id="save-info">Сохранить</button>
           <button type="button" class="btn secondary" id="save-st">Только статус</button>
         </div>`;
@@ -1029,7 +1030,23 @@
             section.insertAdjacentHTML('afterbegin', `<p class="form-error">${esc(err.message)}</p>`);
           }
         };
+        const showClientSaveError = (err, prefix) => {
+          const el = $('e_err');
+          const dups = err && err.payload && err.payload.duplicates;
+          let text = (err && err.message) || 'Не удалось сохранить';
+          if (Array.isArray(dups) && dups.length) {
+            const why = dups[0].match_reason === 'bin' ? 'БИН' : 'ИИН';
+            text = 'Сохранение отменено: уже есть клиент с таким ' + why + '.';
+          }
+          if (prefix) text = prefix + text;
+          if (el) {
+            el.hidden = false;
+            el.textContent = text;
+          }
+        };
         if ($('save-info')) $('save-info').onclick = async () => {
+          const errEl = $('e_err');
+          if (errEl) errEl.hidden = true;
           const body = {
             phone_primary: $('e_phone_primary').value, phone_secondary: $('e_phone_secondary').value,
             current_provider: $('e_current_provider').value, comment: $('e_comment').value
@@ -1041,15 +1058,31 @@
             body.legal_address = $('e_legal_address').value; body.actual_address = $('e_actual_address').value;
             body.potential_connections = $('e_potential_connections').value === '' ? null : Number($('e_potential_connections').value);
           }
-          await api(`/api/clients/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+          try {
+            await api(`/api/clients/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+          } catch (err) {
+            showClientSaveError(err);
+            return;
+          }
           if ($('st').value !== c.status) {
-            await api(`/api/clients/${id}/status`, { method: 'POST', body: JSON.stringify({ status: $('st').value }) });
+            try {
+              await api(`/api/clients/${id}/status`, { method: 'POST', body: JSON.stringify({ status: $('st').value }) });
+            } catch (err) {
+              showClientSaveError(err, 'Данные клиента сохранены, но статус не изменён: ');
+              return;
+            }
           }
           reload();
         };
         if ($('save-st')) $('save-st').onclick = async () => {
-          await api(`/api/clients/${id}/status`, { method: 'POST', body: JSON.stringify({ status: $('st').value }) });
-          reload();
+          const errEl = $('e_err');
+          if (errEl) errEl.hidden = true;
+          try {
+            await api(`/api/clients/${id}/status`, { method: 'POST', body: JSON.stringify({ status: $('st').value }) });
+            reload();
+          } catch (err) {
+            showClientSaveError(err);
+          }
         };
         if ($('add-contact')) $('add-contact').onclick = async () => {
           await api(`/api/clients/${id}/contacts`, { method: 'POST', body: JSON.stringify({
@@ -1470,13 +1503,24 @@
   }
 
   function openForm(title, fields, onSave) {
-    const html = `<h3>${esc(title)}</h3>` + fields.map(([n, l, t]) => `<label>${esc(l)}<input id="f_${n}" type="${t || 'text'}"></label>`).join('') + `<button id="fsave">Сохранить</button>`;
+    const html = `<h3>${esc(title)}</h3>` + fields.map(([n, l, t]) => {
+      const max = n === 'login' ? ' maxlength="64"' : '';
+      return `<label>${esc(l)}<input id="f_${n}" type="${t || 'text'}"${max}></label>`;
+    }).join('') + `<p id="f_err" class="form-error" hidden></p><button id="fsave">Сохранить</button>`;
     openHtml(title, html, () => {
       $('fsave').onclick = async () => {
         const body = {};
         fields.forEach(([n]) => body[n] = document.getElementById('f_' + n).value);
-        await onSave(body);
-        closeModal();
+        try {
+          await onSave(body);
+          closeModal();
+        } catch (err) {
+          const el = $('f_err');
+          if (el) {
+            el.hidden = false;
+            el.textContent = err.message || 'Не удалось сохранить';
+          }
+        }
       };
     });
   }
